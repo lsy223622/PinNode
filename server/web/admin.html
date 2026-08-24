@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PinNode 快速配置</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --page: #f7f5f4; --sidebar: #fff; --surface: #fff; --surface-muted: #f7f5f4;
+      --surface-hover: #f0eeed; --text: #232222; --muted: #706e6d; --faint: #afacab;
+      --border: #e0dddc; --border-soft: #edebea; --primary: #4b70cc; --primary-hover: #3e5db3;
+      --warning: #7e4917; --warning-bg: #fffaf0; --warning-border: #e5993e;
+      --danger: #b22c30; --success: #0a825d; --success-bg: #effeec;
+      --shadow: 0 1px 2px rgba(35, 34, 34, 0.04);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      min-width: 320px; min-height: 100vh; margin: 0; background: var(--page); color: var(--text);
+      font-size: 14px; line-height: 1.45;
+    }
+    button, input, textarea, select { font: inherit; }
+    button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+    .app-shell { min-height: 100vh; }
+    .sidebar {
+      position: fixed; inset: 0 auto 0 0; z-index: 10; display: flex; width: 240px;
+      flex-direction: column; border-right: 1px solid var(--border-soft); background: var(--sidebar);
+    }
+    .brand {
+      display: flex; min-height: 64px; align-items: center; gap: 11px; padding: 0 18px;
+      border-bottom: 1px solid var(--border-soft); color: var(--text); font-size: 15px;
+      font-weight: 700; letter-spacing: -0.01em; text-decoration: none;
+    }
+    .brand-mark {
+      display: grid; width: 22px; grid-template-columns: repeat(3, 4px); gap: 3px;
+      align-content: center; justify-content: center;
+    }
+    .brand-mark i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0.35; }
+    .brand-mark i:nth-child(2), .brand-mark i:nth-child(4), .brand-mark i:nth-child(5),
+    .brand-mark i:nth-child(6), .brand-mark i:nth-child(8) { opacity: 1; }
+    .nav { display: grid; gap: 2px; padding: 18px 10px; }
+    .nav-title {
+      padding: 0 10px 7px; color: var(--faint); font-size: 11px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .nav a {
+      display: flex; min-height: 34px; align-items: center; gap: 10px; padding: 7px 10px;
+      border-radius: 7px; color: var(--muted); font-weight: 520; text-decoration: none;
+    }
+    .nav a:hover { background: var(--surface-muted); color: var(--text); }
+    .nav a:first-of-type { background: var(--surface-hover); color: var(--text); font-weight: 650; }
+    .nav svg { width: 16px; height: 16px; flex: none; }
+    .sidebar-footer {
+      margin-top: auto; padding: 16px 18px; border-top: 1px solid var(--border-soft);
+      color: var(--muted); font-size: 12px;
+    }
+    .status-dot {
+      display: inline-block; width: 7px; height: 7px; margin-right: 7px;
+      border-radius: 50%; background: var(--success);
+    }
+    main { width: calc(100% - 240px); margin-left: 240px; padding: 34px 40px 72px; }
+    .content { width: min(100%, 960px); margin: 0 auto; }
+    .page-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 24px; margin-bottom: 24px;
+    }
+    h1 { margin: 0 0 4px; font-size: 25px; font-weight: 680; letter-spacing: -0.025em; line-height: 1.25; }
+    .hint { max-width: 700px; margin: 0; color: var(--muted); }
+    .primary-button {
+      min-height: 38px; flex: none; padding: 8px 15px; border: 1px solid transparent;
+      border-radius: 7px; background: var(--primary); color: #fff; cursor: pointer;
+      font-weight: 650; box-shadow: var(--shadow);
+    }
+    .primary-button:hover { background: var(--primary-hover); }
+    .primary-button:disabled { cursor: wait; opacity: 0.65; }
+    .notice {
+      display: flex; gap: 12px; margin: 0 0 20px; padding: 13px 15px;
+      border: 1px solid var(--warning-border); border-radius: 10px;
+      background: var(--warning-bg); color: var(--warning);
+    }
+    .notice svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+    .card {
+      margin: 0 0 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 11px;
+      background: var(--surface); box-shadow: var(--shadow); scroll-margin-top: 18px;
+    }
+    .card-header { padding: 17px 20px 15px; border-bottom: 1px solid var(--border-soft); }
+    h2 { margin: 0; font-size: 16px; font-weight: 680; letter-spacing: -0.01em; }
+    .section-hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .field-row { display: block; padding: 16px 20px 18px; }
+    .field-row + .field-row, .setting-row + .field-row, .field-row + .setting-row { border-top: 1px solid var(--border-soft); }
+    .field-label { display: block; margin-bottom: 7px; font-weight: 620; }
+    .field-help { display: block; margin: -2px 0 9px; color: var(--muted); font-size: 12px; }
+    input[type="text"], input[type="password"], input[type="number"], input[type="datetime-local"], textarea, select {
+      display: block; width: min(100%, 620px); padding: 9px 11px; border: 1px solid var(--border);
+      border-radius: 7px; outline: none; background: var(--surface); color: var(--text);
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+    input::placeholder, textarea::placeholder { color: var(--faint); }
+    input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus, input[type="datetime-local"]:focus, textarea:focus, select:focus {
+      border-color: var(--primary); box-shadow: 0 0 0 3px rgba(75, 112, 204, 0.16);
+    }
+    textarea {
+      min-height: 92px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      line-height: 1.55;
+    }
+    .setting-row {
+      position: relative; display: flex; min-height: 64px; align-items: center;
+      gap: 16px; padding: 13px 20px; cursor: pointer;
+    }
+    .setting-row + .setting-row { border-top: 1px solid var(--border-soft); }
+    .setting-row:hover { background: var(--surface-muted); }
+    .setting-copy { min-width: 0; flex: 1; }
+    .setting-title { display: block; font-weight: 580; }
+    .setting-description { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .setting-row.danger .setting-title { color: var(--danger); }
+    .setting-row input[type="checkbox"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .switch-ui {
+      position: relative; width: 36px; height: 20px; flex: none;
+      border-radius: 999px; background: #d9d6d5; transition: background 140ms ease;
+    }
+    .switch-ui::after {
+      position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+      border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(35, 34, 34, 0.25);
+      content: ""; transition: transform 140ms ease;
+    }
+    .setting-row input:checked + .switch-ui { background: var(--primary); }
+    .setting-row input:checked + .switch-ui::after { transform: translateX(16px); }
+    .setting-row input:focus-visible + .switch-ui {
+      outline: 3px solid rgba(75, 112, 204, 0.3); outline-offset: 2px;
+    }
+    .template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 16px 20px 20px; }
+    .template-button {
+      min-height: 82px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); color: var(--text); cursor: pointer; text-align: left;
+    }
+    .template-button:hover { border-color: var(--primary); background: var(--surface-muted); }
+    .template-button strong, .template-button span { display: block; }
+    .template-button span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .result-card {
+      margin-top: 20px; padding: 18px 20px; border: 1px solid var(--border);
+      border-radius: 11px; background: var(--surface); box-shadow: var(--shadow); white-space: pre-wrap;
+    }
+    .result-card[data-state="loading"] { color: var(--muted); }
+    .result-card[data-state="success"] { border-color: var(--success); background: var(--success-bg); }
+    .result-card[data-state="error"] { border-color: var(--danger); color: var(--danger); }
+    .mobile-submit { display: none; }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #181717; --sidebar: #1f1e1e; --surface: #232222; --surface-muted: #2e2d2d;
+        --surface-hover: #2e2d2d; --text: #faf9f8; --muted: #afacab; --faint: #706e6d;
+        --border: #444342; --border-soft: #2e2d2d; --primary: #4b70cc; --primary-hover: #5a82dc;
+        --warning: #f1c27b; --warning-bg: #2b241a; --warning-border: #bb5504;
+        --danger: #ef5350; --success: #1ca672; --success-bg: #17352c; --shadow: none;
+      }
+      .switch-ui { background: #444342; }
+    }
+    @media (max-width: 760px) {
+      .sidebar {
+        position: sticky; width: 100%; height: 58px; border-right: 0;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .brand { min-height: 58px; border-bottom: 0; }
+      .nav, .sidebar-footer { display: none; }
+      main { width: 100%; margin-left: 0; padding: 24px 16px 52px; }
+      .page-header { display: block; }
+      .page-header .primary-button { display: none; }
+      h1 { font-size: 23px; }
+      .card { border-radius: 10px; }
+      .card-header, .field-row, .setting-row { padding-right: 16px; padding-left: 16px; }
+      .template-grid { grid-template-columns: 1fr; padding-right: 16px; padding-left: 16px; }
+      .mobile-submit { display: block; width: 100%; margin-top: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#top" aria-label="PinNode 管理控制台">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        <span>PinNode</span>
+      </a>
+      <nav class="nav" aria-label="配置分区">
+        <span class="nav-title">临时节点</span>
+        <a href="#templates"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8m-8 4h5"/></svg>快速模板</a>
+        <a href="#authentication"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3"/><rect x="4" y="10" width="16" height="11" rx="2"/></svg>管理员认证</a>
+        <a href="#client"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 19v2m8-2v2M8 9h8"/></svg>客户端行为</a>
+        <a href="#router"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.3 10.9 7.4-3.8m-7.4 6 7.4 3.8"/></svg>Subnet Router</a>
+        <a href="#exit-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12h13m-5-5 5 5-5 5"/><path d="M20 5v14"/></svg>Exit Node</a>
+        <a href="#advanced"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>高级偏好</a>
+        <a href="#lifecycle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>退出策略</a>
+      </nav>
+      <div class="sidebar-footer"><span class="status-dot"></span>配置服务已就绪</div>
+    </aside>
+
+    <main id="top">
+      <form id="config-form" class="content">
+        <header class="page-header">
+          <div>
+            <h1>PinNode 快速配置</h1>
+            <p class="hint">选择用途模板并生成一次性六位授权码；节点设置和退出策略随授权码下发。</p>
+          </div>
+          <button class="primary-button" type="submit">生成授权码</button>
+        </header>
+
+        <div class="notice" role="note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6m0-9.25v.5"/></svg>
+          <span>本页不会保存管理员令牌，但浏览器会通过当前连接把令牌放入请求头。生产环境请使用 HTTPS，并限制管理端口的访问来源。</span>
+        </div>
+
+        <section class="card" id="templates">
+          <div class="card-header"><h2>快速配置模板</h2><p class="section-hint">模板会填写核心线路和路由选项，之后仍可继续微调。</p></div>
+          <div class="template-grid">
+            <button class="template-button" type="button" data-template="rescue"><strong>救援连接</strong><span>Tailscale 固定走移动数据；Wi-Fi 只承载网关 /32。</span></button>
+            <button class="template-button" type="button" data-template="subnet"><strong>子网路由</strong><span>保持默认线路，自动发布当前 Wi-Fi IPv4 子网。</span></button>
+            <button class="template-button" type="button" data-template="exit"><strong>代理节点</strong><span>保持默认线路，并把手机发布为 Exit Node。</span></button>
+            <button class="template-button" type="button" data-template="normal"><strong>普通节点</strong><span>接受 tailnet 路由和 DNS，不发布本地路由。</span></button>
+          </div>
+        </section>
+
+        <section class="card" id="authentication">
+          <div class="card-header"><h2>管理员认证</h2><p class="section-hint">令牌仅用于本次生成请求。</p></div>
+          <label class="field-row" for="admin-token"><span class="field-label">管理员令牌</span><input id="admin-token" type="password" autocomplete="off" required></label>
+        </section>
+
+        <section class="card" id="client">
+          <div class="card-header"><h2>客户端基础行为</h2><p class="section-hint">控制临时节点加入 tailnet 后的默认连接方式。</p></div>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">开启 Tailscale VPN 数据面</span><span class="setting-description">作为 Subnet Router 或 Exit Node 时必须开启；关闭后不转发 Tailscale 流量。</span></span><input id="vpn-enabled" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">接受 Subnet Routes</span><span class="setting-description">接受 tailnet 下发的局域网路由。</span></span><input id="accept-routes" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">使用 Tailscale DNS</span><span class="setting-description">接受 Tailscale DNS 和 MagicDNS 设置。</span></span><input id="accept-dns" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">Shields Up</span><span class="setting-description">阻止其他设备主动连接这个临时节点。</span></span><input id="shields-up" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="field-row" for="network-mode"><span class="field-label">Tailscale 底层线路</span><span class="field-help">默认线路沿用上游逻辑，优先选择有 DNS 的非计费网络；蜂窝线路不会回退到 Wi-Fi。</span><select id="network-mode"><option value="default">默认线路选择</option><option value="cellular" selected>固定使用移动数据</option></select></label>
+        </section>
+
+        <section class="card" id="router">
+          <div class="card-header"><h2>本机作为 Subnet Router</h2><p class="section-hint">发布手机通过当前 Wi-Fi 可到达的家庭网络。</p></div>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">发布局域网路由</span><span class="setting-description">让 tailnet 设备经由本临时节点访问家庭网络。</span></span><input id="subnet-router" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">自动发布当前 Wi-Fi 网关的 /32</span><span class="setting-description">默认的最小权限访问范围。</span></span><input id="auto-gateway-route" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">自动发布当前 Wi-Fi IPv4 子网</span><span class="setting-description">根据手机接口地址和前缀自动计算所在局域网段。</span></span><input id="auto-wifi-subnet-route" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="field-row" for="advertise-routes"><span class="field-label">额外发布的 CIDR</span><span class="field-help">每行一条，例如 <code>192.168.1.0/24</code>；留空表示不增加额外网段。</span><textarea id="advertise-routes" placeholder="192.168.1.0/24"></textarea></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">广告为 Exit Node</span><span class="setting-description">同时发布 IPv4 和 IPv6 默认路由。</span></span><input id="advertise-exit-node" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">关闭 SNAT</span><span class="setting-description">需要家庭 LAN 已配置返回 Tailscale 的路由。</span></span><input id="disable-snat" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">关闭有状态过滤</span><span class="setting-description">仅在明确理解返回路径时启用。</span></span><input id="no-stateful-filtering" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+        </section>
+
+        <section class="card" id="exit-node">
+          <div class="card-header"><h2>本机使用 Exit Node</h2><p class="section-hint">为临时 Android 节点选择互联网出口。</p></div>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">使用 Exit Node</span><span class="setting-description">通过指定的 tailnet 设备访问互联网。</span></span><input id="use-exit-node" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="field-row" for="exit-node-id"><span class="field-label">Exit Node Stable ID</span><input id="exit-node-id" type="text" placeholder="nxxxxxxxxxxxxxxxx"></label>
+          <label class="field-row" for="exit-node-ip"><span class="field-label">或 Exit Node IP</span><input id="exit-node-ip" type="text" placeholder="100.64.0.10"></label>
+          <label class="field-row" for="auto-exit-node"><span class="field-label">自动选择 Exit Node</span><select id="auto-exit-node"><option value="">不自动选择</option><option value="auto:any">auto:any（由 Tailscale 自动选择）</option></select></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">允许本地网络访问</span><span class="setting-description">使用 Exit Node 时仍可直接访问本地 LAN。</span></span><input id="exit-node-lan" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+        </section>
+
+        <section class="card" id="advanced">
+          <div class="card-header"><h2>其他官方客户端偏好</h2><p class="section-hint">这些选项仅在当前 Android 构建支持时生效。</p></div>
+          <label class="field-row" for="hostname"><span class="field-label">临时节点 Hostname</span><span class="field-help">可选；留空时使用 Android 默认名称。</span><input id="hostname" type="text" maxlength="255" placeholder="Android 默认名称"></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">Tailscale SSH Server</span><span class="setting-description">允许通过 Tailscale SSH 连接本节点。</span></span><input id="run-ssh" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">Tailscale Web Client</span><span class="setting-description">启用当前构建提供的 Web Client。</span></span><input id="run-web-client" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">Device Posture</span><span class="setting-description">收集并上报设备姿态信息。</span></span><input id="posture-checking" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row danger"><span class="setting-copy"><span class="setting-title">允许远程配置</span><span class="setting-description">允许 tailnet 管理员远程修改本节点的全部偏好（高风险）。</span></span><input id="remote-config" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="field-row" for="netfilter-mode"><span class="field-label">Netfilter Mode</span><select id="netfilter-mode"><option value="">使用客户端默认值</option><option value="on">on</option><option value="off">off</option><option value="nodivert">nodivert</option></select></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">App Connector</span><span class="setting-description">启用 App Connector 广告。</span></span><input id="app-connector" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">检查客户端更新</span><span class="setting-description">定期检查可用的客户端更新。</span></span><input id="auto-update-check" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">自动安装客户端更新</span><span class="setting-description">发现更新后自动安装。</span></span><input id="auto-update-apply" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
+        </section>
+
+        <section class="card" id="lifecycle">
+          <div class="card-header"><h2>自动退出策略</h2><p class="section-hint">全部留空时持续保持登录；正常关闭会立即注销，遇到 OEM 强杀时 VPN 随进程断开，下一次启动不会恢复并会补做清理。</p></div>
+          <label class="setting-row"><span class="setting-copy"><span class="setting-title">从最近任务关闭应用时退出</span><span class="setting-description">滑走任务时注销并删除节点；强制停止、断电等情况由时间策略兜底。</span></span><input id="exit-on-app-close" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
+          <label class="field-row" for="network-exit"><span class="field-label">网络变化时退出</span><select id="network-exit"><option value="">不因网络变化退出</option><option value="wifi-lost">Wi-Fi 丢失时</option><option value="cellular-lost">移动数据丢失时</option><option value="any-change">Wi-Fi 或移动数据状态变化时</option></select></label>
+          <label class="field-row" for="after-config"><span class="field-label">配置发布后退出（秒）</span><span class="field-help">从本次授权码生成时开始计算；0 表示不启用。</span><input id="after-config" type="number" min="0" max="31536000" value="0"></label>
+          <label class="field-row" for="after-login"><span class="field-label">登录后退出（秒）</span><span class="field-help">从手机成功兑换授权码时开始计算；0 表示不启用。</span><input id="after-login" type="number" min="0" max="31536000" value="0"></label>
+          <label class="field-row" for="exit-at"><span class="field-label">固定时间退出</span><span class="field-help">按浏览器本地时区填写；留空表示不启用。</span><input id="exit-at" type="datetime-local"></label>
+        </section>
+
+        <button class="primary-button mobile-submit" type="submit">生成授权码</button>
+        <div id="result" class="result-card" hidden role="status" aria-live="polite"></div>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const checked = (id) => $(id).checked;
+    const value = (id) => $(id).value.trim();
+    const numberValue = (id) => Number.parseInt(value(id), 10) || 0;
+    const result = $("result");
+    const submitButtons = document.querySelectorAll("button[type=submit]");
+
+    function showResult(state, text) {
+      result.hidden = false;
+      result.dataset.state = state;
+      result.textContent = text;
+      result.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    const templates = {
+      rescue: { networkMode: "cellular", subnetRouter: true, gateway: true, subnet: false, advertiseExit: false },
+      subnet: { networkMode: "default", subnetRouter: true, gateway: false, subnet: true, advertiseExit: false },
+      exit: { networkMode: "default", subnetRouter: false, gateway: false, subnet: false, advertiseExit: true },
+      normal: { networkMode: "default", subnetRouter: false, gateway: false, subnet: false, advertiseExit: false }
+    };
+
+    document.querySelectorAll("[data-template]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const preset = templates[button.dataset.template];
+        $("network-mode").value = preset.networkMode;
+        $("vpn-enabled").checked = true;
+        $("accept-routes").checked = true;
+        $("accept-dns").checked = true;
+        $("subnet-router").checked = preset.subnetRouter;
+        $("auto-gateway-route").checked = preset.gateway;
+        $("auto-wifi-subnet-route").checked = preset.subnet;
+        $("advertise-exit-node").checked = preset.advertiseExit;
+        $("advertise-routes").value = "";
+        $("use-exit-node").checked = false;
+        $("exit-node-id").value = "";
+        $("exit-node-ip").value = "";
+        $("auto-exit-node").value = "";
+        showResult("success", "已应用“" + button.querySelector("strong").textContent + "”模板，可继续调整后生成授权码。");
+      });
+    });
+
+    $("config-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      showResult("loading", "正在生成授权码…");
+      submitButtons.forEach((button) => { button.disabled = true; });
+      const routes = value("advertise-routes").split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
+      const body = {
+        config: {
+          networkMode: value("network-mode"),
+          vpnEnabled: checked("vpn-enabled"),
+          acceptRoutes: checked("accept-routes"),
+          acceptDNS: checked("accept-dns"),
+          useExitNode: checked("use-exit-node"),
+          exitNodeId: value("exit-node-id"),
+          exitNodeIp: value("exit-node-ip"),
+          autoExitNode: value("auto-exit-node"),
+          exitNodeAllowLanAccess: checked("exit-node-lan"),
+          subnetRouter: checked("subnet-router"),
+          autoGatewayRoute: checked("auto-gateway-route"),
+          autoWiFiSubnetRoute: checked("auto-wifi-subnet-route"),
+          advertiseRoutes: routes,
+          advertiseExitNode: checked("advertise-exit-node"),
+          disableSNAT: checked("disable-snat"),
+          noStatefulFiltering: checked("no-stateful-filtering"),
+          shieldsUp: checked("shields-up"),
+          runSSHServer: checked("run-ssh"),
+          runWebClient: checked("run-web-client"),
+          postureChecking: checked("posture-checking"),
+          remoteConfig: checked("remote-config"),
+          hostname: value("hostname"),
+          netfilterMode: value("netfilter-mode"),
+          appConnector: checked("app-connector"),
+          autoUpdateCheck: checked("auto-update-check"),
+          autoUpdateApply: checked("auto-update-apply"),
+          exitPolicy: {
+            onAppClose: checked("exit-on-app-close"),
+            networkChange: value("network-exit"),
+            afterConfigSeconds: numberValue("after-config"),
+            afterLoginSeconds: numberValue("after-login"),
+            at: value("exit-at") ? new Date(value("exit-at")).toISOString() : ""
+          }
+        }
+      };
+      try {
+        const response = await fetch("/v1/pairing-codes", {
+          method: "POST",
+          headers: {
+            "Authorization": "Bearer " + value("admin-token"),
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || ("HTTP " + response.status));
+        showResult("success", "授权码\n" + payload.code + "\n\n有效期至：" + payload.expiresAt + "\n请把六位数字交给手机使用者；该 code 只能兑换一次。");
+      } catch (error) {
+        showResult("error", "生成失败：" + error.message);
+      } finally {
+        submitButtons.forEach((button) => { button.disabled = false; });
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+# PinNode 架构
+
+## 组件关系
+
+```text
+管理员浏览器
+    │ Bearer token + 受管配置
+    ▼
+PinNode server ── OAuth client secret ── Tailscale API
+    │                                      │
+    │ 一次性 auth key + 会话令牌           │ 验证设备、启用/撤销路由、删除设备
+    ▼                                      ▼
+Android App ── Tailscale Go backend ── WireGuard / DERP / control
+    │                    │
+    │                    └─ netstack TCP/UDP forwarding binder
+    │
+    ├─ default：使用上游默认网络选择
+    └─ cellular：控制面/非 LAN 走移动数据，指定 LAN 前缀走 Wi-Fi
+```
+
+PinNode 与官方应用使用不同包名和 Android 数据目录。它复用 Tailscale backend 和
+LocalAPI 数据面，但用服务端受管单屏 UI 取代本地账号登录和配置页面。
+
+## 管理配置
+
+`POST /v1/pairing-codes` 把规范化配置与一次性六位 PIN 绑定。PIN 记录不包含 OAuth
+secret 或 auth key。主要映射如下：
+
+| 配置 | Android/Go 行为 |
+| --- | --- |
+| `networkMode=default` | eligible 网络中优先非计费网络，随后使用其他有 DNS/Internet 的网络 |
+| `networkMode=cellular` | Tailscale control、DERP、endpoint 和非 LAN 转发固定选移动数据 |
+| `acceptRoutes` / `acceptDNS` | `RouteAll` / `CorpDNS` |
+| `useExitNode`、ID/IP/`auto:any` | `ExitNodeID`、`ExitNodeIP`、`AutoExitNode` |
+| `subnetRouter` + 自动/显式 CIDR | `AdvertiseRoutes` 和服务端 enabled routes |
+| `autoGatewayRoute` | 当前 Wi-Fi IPv4 网关 `/32` |
+| `autoWiFiSubnetRoute` | 当前 Wi-Fi IPv4 接口的规范网络前缀 |
+| `advertiseExitNode` | 增加 `0.0.0.0/0` 和 `::/0` |
+| Shields、Hostname、SSH/Web 等 | 对应当前 Android backend 的 LocalAPI prefs |
+| `exitPolicy` | 时间、网络变化和应用关闭触发的退出条件 |
+
+`routes` 是广告并由服务端启用的完整列表；`wifiRoutes` 只包含需要绑定到 Wi-Fi 的
+LAN 前缀。Exit Node 默认路由不进入 `wifiRoutes`。自动网关和自动整个 Wi-Fi 子网
+互斥，避免无意同时扩大范围。
+
+快速模板只是这些字段的预设：救援、子网路由、代理节点和普通节点都走同一供应与
+清理状态机。
+
+## 登录与持久状态
+
+```text
+PIN issued → consumed → one-time key + provisioning challenge issued
+    → persistent node joined → creation/name/tag verified → unique node binding
+    → exact routes enabled → optional onAppClose heartbeat lease active
+    → explicit/policy/optional heartbeat exit → routes withdrawn → device deleted
+```
+
+auth key 有效期十分钟、`reusable=false`、`preauthorized=true`；加入后的节点必须是
+`ephemeral=false`。服务端把 auth key ID、唯一 provisioning hostname、node ID、令牌
+摘要、配置和完整状态保存在 SQLite；auth key 明文不入库。Android 在登录前先把会话和
+原服务器 URL 写入加密 SharedPreferences，绑定成功后转为 active。普通进程重建会恢复
+网络模式、路由和退出定时器，并在已有 VPN 权限时重新请求 VPN service。
+
+时间退出支持：配置发布后时长、登录后时长和固定 RFC3339 时间，多个条件取最早者。
+网络退出支持任意变化、Wi-Fi 丢失或移动数据丢失。仅 `onAppClose` 会话按服务端下发
+间隔续租，默认五分钟未收到心跳即清理；普通长期会话不建立心跳 deadline。停止接口和
+服务端清理均按数据库唯一绑定的精确 node ID 操作；hostname 只用于首次供应挑战，
+不用于后续模糊选择。
+
+应用关闭策略需要兼容两类 Android 行为：
+
+1. 正常投递 Activity/Service 生命周期回调时，PinNode 先持久化退出态，再做本地注销；
+2. OEM 直接强杀时没有回调，VPN 随进程立即断开。该策略的加密会话在下一次进程启动
+   时绝不恢复，并转换为待清理记录，补做 logout、路由撤销和设备删除。
+
+## Android 网络选择
+
+`RescueNetworkController` 同时观察非 VPN Wi-Fi 和移动网络。Wi-Fi 只要求存在带网关
+的默认路由，不要求 `VALIDATED`，因此无 WAN 的家庭 Wi-Fi 仍可作为 LAN 出口。
+
+cellular 模式下：
+
+- control/DERP/endpoint 只暴露移动数据接口；
+- netstack 目标命中 `wifiRoutes` 时逐 socket `protect` 后绑定 Wi-Fi；
+- 其他转发 socket 绑定移动数据；
+- 移动数据缺失或 LAN 对应 Wi-Fi 缺失时 fail closed，不回退到另一条线路；
+- Wi-Fi 丢失默认保持会话和路由，恢复后自动继续，除非退出策略明确要求退出。
+
+default 模式不强制目的地绑定，保留上游默认网络选择。当前选择器对有 DNS 的 eligible
+非 VPN 网络优先 `NOT_METERED`，随后回退到其他 Internet 网络。
+
+## 固定服务器构建
+
+Gradle 从被忽略的 `android/local.properties` 读取 `pinnode.serverUrl`、
+`pinnode.serverName` 和 `pinnode.serverLocked`。locked 构建要求 URL 和名称同时
+存在；运行时只显示名称且禁用编辑。URL 是 APK 内部配置而不是秘密，服务器仍必须
+执行认证、TLS 和最小权限控制。
+
+## 路由批准与部署
+
+路由可用需要节点广告、管理员批准/auto-approval、控制面下发和客户端接受四个条件。
+服务端使用设备 routes API 启用该会话的精确列表。当前技术标签仍是
+`tag:rescue-gateway`，生产 tailnet 应用精确 autoApprovers 或等价审批策略，不能用
+宽泛私网段授权替代。
+
+SQLite 持久保存全部历史会话和清理重试状态，服务端重启后 reaper 会继续处理过期、
+心跳超时和 `cleanup_failed` 会话。当前数据库适用于单服务实例；多实例需要共享事务
+数据库及共享限流。
+
+为减少后续同步 Tailscale Android 上游时的冲突，未删除上游入口实现：
+`ShareActivity` 和 `QuickToggleService` 在 manifest 中禁用，`IPNReceiver` 设为
+`exported=false`、只保留应用内部通知动作。受管界面不会暴露这些入口。

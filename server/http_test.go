@@ -1,0 +1,356 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type fakeTailscale struct {
+	mu                 sync.Mutex
+	device             Device
+	routes             map[string][]string
+	routeCalls         map[string]int
+	deleted            []string
+	deletedAuthKeys    []string
+	ephemeralRequested []bool
+}
+
+func (f *fakeTailscale) CreateAuthKey(_ context.Context, _ time.Duration, ephemeral bool) (AuthKey, error) {
+	f.mu.Lock()
+	f.ephemeralRequested = append(f.ephemeralRequested, ephemeral)
+	f.mu.Unlock()
+	return AuthKey{Secret: "tskey-test", ID: "k-test"}, nil
+}
+
+func (f *fakeTailscale) DeleteAuthKey(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deletedAuthKeys = append(f.deletedAuthKeys, id)
+	return nil
+}
+
+func (f *fakeTailscale) GetDevice(context.Context, string) (Device, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.device, nil
+}
+
+func (f *fakeTailscale) SetDeviceRoutes(_ context.Context, id string, routes []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.routes == nil {
+		f.routes = make(map[string][]string)
+	}
+	if f.routeCalls == nil {
+		f.routeCalls = make(map[string]int)
+	}
+	f.routes[id] = append([]string(nil), routes...)
+	f.routeCalls[id]++
+	return nil
+}
+
+func (f *fakeTailscale) DeleteDevice(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, id)
+	return nil
+}
+
+func TestSessionProvisionAndCleanup(t *testing.T) {
+	fake := &fakeTailscale{device: Device{NodeID: "n-test", Tags: []string{"tag:rescue-gateway"}}}
+	config := Config{
+		CodePepper: "test-pepper",
+		AdminToken: "test-admin-token",
+		CodeTTL:    5 * time.Minute,
+	}
+	service := NewService(config, NewStore(), fake, nil)
+
+	codeRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/pairing-codes",
+		strings.NewReader(`{"config":{"networkMode":"default","exitPolicy":{"onAppClose":true}}}`),
+	)
+	codeRequest.Header.Set("Authorization", "Bearer "+config.AdminToken)
+	codeResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(codeResponse, codeRequest)
+	if codeResponse.Code != http.StatusCreated {
+		t.Fatalf("申请 code 返回 %d: %s", codeResponse.Code, codeResponse.Body.String())
+	}
+	var codeBody struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(codeResponse.Body.Bytes(), &codeBody); err != nil {
+		t.Fatal(err)
+	}
+
+	startBody := `{"code":"` + codeBody.Code + `","gatewayRoute":"192.168.1.1/32"}`
+	startRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(startBody))
+	startResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(startResponse, startRequest)
+	if startResponse.Code != http.StatusCreated {
+		t.Fatalf("启动会话返回 %d: %s", startResponse.Code, startResponse.Body.String())
+	}
+	var startResult struct {
+		SessionID            string `json:"sessionId"`
+		SessionToken         string `json:"sessionToken"`
+		AuthKey              string `json:"authKey"`
+		ProvisioningHostname string `json:"provisioningHostname"`
+		HeartbeatSeconds     int64  `json:"heartbeatIntervalSeconds"`
+	}
+	if err := json.Unmarshal(startResponse.Body.Bytes(), &startResult); err != nil {
+		t.Fatal(err)
+	}
+	if startResult.SessionID == "" || startResult.SessionToken == "" || startResult.AuthKey != "tskey-test" {
+		t.Fatalf("会话响应缺少必要字段: %+v", startResult)
+	}
+	if startResult.HeartbeatSeconds <= 0 {
+		t.Fatalf("应用关闭会话没有启用心跳: %+v", startResult)
+	}
+	fake.mu.Lock()
+	fake.device.Hostname = startResult.ProvisioningHostname
+	fake.device.Created = time.Now()
+	fake.mu.Unlock()
+	fake.mu.Lock()
+	if len(fake.ephemeralRequested) != 1 || fake.ephemeralRequested[0] {
+		fake.mu.Unlock()
+		t.Fatalf("默认节点不应使用 ephemeral auth key: %v", fake.ephemeralRequested)
+	}
+	fake.mu.Unlock()
+
+	attachBody := `{"nodeId":"n-test"}`
+	attachRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", strings.NewReader(attachBody))
+	attachRequest.Header.Set("Authorization", "Bearer "+startResult.SessionToken)
+	attachResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(attachResponse, attachRequest)
+	if attachResponse.Code != http.StatusOK {
+		t.Fatalf("绑定设备返回 %d: %s", attachResponse.Code, attachResponse.Body.String())
+	}
+	heartbeatRequest := httptest.NewRequest(
+		http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/heartbeat", nil,
+	)
+	heartbeatRequest.Header.Set("Authorization", "Bearer "+startResult.SessionToken)
+	heartbeatResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(heartbeatResponse, heartbeatRequest)
+	if heartbeatResponse.Code != http.StatusOK {
+		t.Fatalf("会话心跳返回 %d: %s", heartbeatResponse.Code, heartbeatResponse.Body.String())
+	}
+
+	stopRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/stop", nil)
+	stopRequest.Header.Set("Authorization", "Bearer "+startResult.SessionToken)
+	stopResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(stopResponse, stopRequest)
+	if stopResponse.Code != http.StatusOK {
+		t.Fatalf("停止会话返回 %d: %s", stopResponse.Code, stopResponse.Body.String())
+	}
+	historyRequest := httptest.NewRequest(http.MethodGet, "/v1/sessions?limit=10", nil)
+	historyRequest.Header.Set("Authorization", "Bearer "+config.AdminToken)
+	historyResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(historyResponse, historyRequest)
+	if historyResponse.Code != http.StatusOK ||
+		!strings.Contains(historyResponse.Body.String(), startResult.SessionID) ||
+		!strings.Contains(historyResponse.Body.String(), `"status":"stopped"`) {
+		t.Fatalf("历史会话未保留停止记录: %d %s", historyResponse.Code, historyResponse.Body.String())
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := fake.routes["n-test"]; len(got) != 0 {
+		t.Fatalf("清理后路由仍存在: %v", got)
+	}
+	if len(fake.deleted) != 1 || fake.deleted[0] != "n-test" {
+		t.Fatalf("删除设备调用异常: %v", fake.deleted)
+	}
+}
+
+func TestAttachRejectsDeviceWithoutProvisioningChallenge(t *testing.T) {
+	fake := &fakeTailscale{
+		device: Device{
+			NodeID:   "n-existing",
+			Hostname: "another-pinnode",
+			Created:  time.Now().Add(-time.Hour),
+			Tags:     []string{"tag:rescue-gateway"},
+		},
+	}
+	config := Config{CodePepper: "test-pepper", AdminToken: "test-admin-token", CodeTTL: time.Minute}
+	service := NewService(config, NewStore(), fake, nil)
+	code := createTestPairingCode(t, service, config.AdminToken)
+
+	startRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sessions",
+		strings.NewReader(`{"code":"`+code+`","gatewayRoute":"192.168.1.1/32"}`),
+	)
+	startResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(startResponse, startRequest)
+	if startResponse.Code != http.StatusCreated {
+		t.Fatalf("启动会话返回 %d: %s", startResponse.Code, startResponse.Body.String())
+	}
+	var started struct {
+		ID    string `json:"sessionId"`
+		Token string `json:"sessionToken"`
+	}
+	if err := json.Unmarshal(startResponse.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	attachRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sessions/"+started.ID+"/device",
+		strings.NewReader(`{"nodeId":"n-existing"}`),
+	)
+	attachRequest.Header.Set("Authorization", "Bearer "+started.Token)
+	attachResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(attachResponse, attachRequest)
+	if attachResponse.Code != http.StatusForbidden {
+		t.Fatalf("既有同标签设备被错误绑定: %d %s", attachResponse.Code, attachResponse.Body.String())
+	}
+}
+
+func createTestPairingCode(t *testing.T, service *Service, adminToken string) string {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/v1/pairing-codes", nil)
+	request.Header.Set("Authorization", "Bearer "+adminToken)
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("申请 code 返回 %d: %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	return result.Code
+}
+
+func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
+	fake := &fakeTailscale{device: Device{NodeID: "n-configured", Tags: []string{"tag:rescue-gateway"}}}
+	config := Config{
+		CodePepper: "test-pepper",
+		AdminToken: "test-admin-token",
+		CodeTTL:    5 * time.Minute,
+	}
+	store := NewStore()
+	service := NewService(config, store, fake, nil)
+
+	codeRequest := httptest.NewRequest(http.MethodPost, "/v1/pairing-codes", strings.NewReader(`{"config":{"vpnEnabled":false,"acceptRoutes":false,"acceptDNS":false,"subnetRouter":true,"autoGatewayRoute":false,"advertiseRoutes":["192.168.1.0/24"]}}`))
+	codeRequest.Header.Set("Authorization", "Bearer "+config.AdminToken)
+	codeResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(codeResponse, codeRequest)
+	if codeResponse.Code != http.StatusCreated {
+		t.Fatalf("带配置申请 code 返回 %d: %s", codeResponse.Code, codeResponse.Body.String())
+	}
+	var codeBody struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(codeResponse.Body.Bytes(), &codeBody); err != nil {
+		t.Fatal(err)
+	}
+
+	startRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"code":"`+codeBody.Code+`","gatewayRoute":"192.168.1.1/32"}`))
+	startResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(startResponse, startRequest)
+	if startResponse.Code != http.StatusCreated {
+		t.Fatalf("带配置启动会话返回 %d: %s", startResponse.Code, startResponse.Body.String())
+	}
+	var startResult struct {
+		SessionID            string       `json:"sessionId"`
+		Token                string       `json:"sessionToken"`
+		Config               RescueConfig `json:"config"`
+		Routes               []string     `json:"routes"`
+		ProvisioningHostname string       `json:"provisioningHostname"`
+		HeartbeatSeconds     int64        `json:"heartbeatIntervalSeconds"`
+	}
+	if err := json.Unmarshal(startResponse.Body.Bytes(), &startResult); err != nil {
+		t.Fatal(err)
+	}
+	if startResult.Config.VPNEnabled || startResult.Config.AcceptRoutes || startResult.Config.AcceptDNS {
+		t.Fatalf("客户端配置未从 pairing code 传递: %+v", startResult.Config)
+	}
+	if len(startResult.Routes) != 1 || startResult.Routes[0] != "192.168.1.0/24" {
+		t.Fatalf("实际路由错误: %v", startResult.Routes)
+	}
+	if startResult.HeartbeatSeconds != 0 {
+		t.Fatalf("未启用应用关闭策略的会话不应下发心跳: %d", startResult.HeartbeatSeconds)
+	}
+	fake.mu.Lock()
+	fake.device.Hostname = startResult.ProvisioningHostname
+	fake.device.Created = time.Now()
+	fake.mu.Unlock()
+
+	attachRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", strings.NewReader(`{"nodeId":"n-configured"}`))
+	attachRequest.Header.Set("Authorization", "Bearer "+startResult.Token)
+	attachResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(attachResponse, attachRequest)
+	if attachResponse.Code != http.StatusOK {
+		t.Fatalf("绑定配置设备返回 %d: %s", attachResponse.Code, attachResponse.Body.String())
+	}
+	retryRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", strings.NewReader(`{"nodeId":"n-configured"}`))
+	retryRequest.Header.Set("Authorization", "Bearer "+startResult.Token)
+	retryResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(retryResponse, retryRequest)
+	if retryResponse.Code != http.StatusOK {
+		t.Fatalf("重复绑定设备返回 %d: %s", retryResponse.Code, retryResponse.Body.String())
+	}
+	heartbeatRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/heartbeat", nil)
+	heartbeatRequest.Header.Set("Authorization", "Bearer "+startResult.Token)
+	heartbeatResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(heartbeatResponse, heartbeatRequest)
+	if heartbeatResponse.Code != http.StatusConflict {
+		t.Fatalf("长期会话错误接受心跳: %d %s", heartbeatResponse.Code, heartbeatResponse.Body.String())
+	}
+	stored, ok, err := store.GetSession(startResult.SessionID)
+	if err != nil || !ok || !stored.HeartbeatDeadline.IsZero() {
+		t.Fatalf("长期会话错误建立心跳租约: ok=%v deadline=%v err=%v", ok, stored.HeartbeatDeadline, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := fake.routes["n-configured"]; len(got) != 1 || got[0] != "192.168.1.0/24" {
+		t.Fatalf("控制面收到的路由错误: %v", got)
+	}
+	if fake.routeCalls["n-configured"] != 2 {
+		t.Fatalf("重复绑定没有重新确认控制面路由: %d", fake.routeCalls["n-configured"])
+	}
+}
+
+func TestAdminPageIsEmbedded(t *testing.T) {
+	service := NewService(Config{}, NewStore(), &fakeTailscale{}, nil)
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "PinNode 快速配置") {
+		t.Fatalf("管理页面没有正确嵌入: code=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
+func TestDiagnosticRouteRedactsSessionID(t *testing.T) {
+	for input, want := range map[string]string{
+		"/v1/sessions/secret-session/device":    "/v1/sessions/:id/device",
+		"/v1/sessions/secret-session/heartbeat": "/v1/sessions/:id/heartbeat",
+		"/v1/sessions/secret-session/stop":      "/v1/sessions/:id/stop",
+		"/v1/sessions/secret-session":           "/v1/sessions/:id",
+		"/healthz":                              "/healthz",
+	} {
+		if got := diagnosticRoute(input); got != want {
+			t.Errorf("diagnosticRoute(%q)=%q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestDiagnosticIdentifierIsStableAndRedacted(t *testing.T) {
+	const identifier = "secret-session-id"
+	first := diagnosticIdentifier(identifier)
+	second := diagnosticIdentifier(identifier)
+	if first != second || len(first) != 12 || strings.Contains(first, identifier) {
+		t.Fatalf("diagnosticIdentifier()=%q is not a stable redacted reference", first)
+	}
+	if first == diagnosticIdentifier("another-session-id") {
+		t.Fatal("different identifiers produced the same diagnostic reference")
+	}
+}

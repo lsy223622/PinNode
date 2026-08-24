@@ -1,0 +1,13 @@
+# Copy this file to android/local.properties. The real file is ignored by Git.
+sdk.dir=C\:\\path\\to\\Android\\Sdk
+
+# Editable build: URL is only the initial value and can be changed in the app.
+pinnode.serverUrl=https://pinnode.example.invalid
+pinnode.serverName=
+pinnode.serverLocked=false
+
+# Fixed-server build: set all three values below. The app renders only the
+# display name; the URL is internal and the field cannot be edited.
+# pinnode.serverUrl=https://pinnode.example.invalid
+# pinnode.serverName=My PinNode Server
+# pinnode.serverLocked=true

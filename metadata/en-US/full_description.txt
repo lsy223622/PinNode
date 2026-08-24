@@ -1,0 +1,3 @@
+PinNode is a managed Android Tailscale node for temporary, server-issued connections. Pair with a PinNode server using a one-time PIN, apply the server-provided network and routing policy, review connection status, and stop the session explicitly.
+
+The Android app keeps server credentials out of the client UI and uses Tailscale networking for the managed connection.

@@ -1,0 +1,77 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Local configuration and secrets. Keep example files trackable.
+**/local.properties
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+tailscale.jks
+
+# Build caches. These are disposable and must never be part of the source tree
+# tracked by Git. This also covers caches nested in third_party/tailscale.
+**/.cache/
+**/.gradle/
+
+# Android and native build output
+**/build/
+**/.cxx/
+**/.externalNativeBuild/
+/android/libs/
+/android_legacy/libs/
+/android/src/main/jniLibs/*
+/*.apk
+/*.aab
+*.aar
+*.stripped
+*.unstripped
+*.debug
+*.hprof
+
+# Generated archives and local test artifacts
+/.artifacts/
+/out/
+/dist/
+/captures/
+**/test-results/
+**/playwright-report/
+**/.playwright-cli/
+
+# Local upstream/reference material and emulator/SDK state
+/.upstream/
+/android-sdk/
+*.avd/
+.android-docker/
+.android-integration-docker/
+.cache-docker/
+.gradle-docker/
+
+# PinNode server runtime state and generated version file
+/server/data/
+/server/.env
+/tailscale.version
+
+# Temporary files
+/.tmp/
+*.tmp
+*.swp
+/server/.gocache
+
+# Local build and test output
+/server/server
+/server/server.exe
+coverage.out
+*.coverprofile
+*.test
+*.log
+
+# Kotlin and Nix local state
+**/.kotlin/
+/result
+/.direnv/
