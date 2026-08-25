@@ -1,8 +1,7 @@
 # PinNode
 
 PinNode 是一个由服务端统一下发配置的 Android Tailscale 节点。它基于 Tailscale
-Android 与 Go backend，但使用独立包名 `com.lsy223622.pinnode` 和应用名
-`PinNode`，不会覆盖或复用官方 `com.tailscale.ipn` 应用的数据。
+Android 与 Go backend。
 
 项目当前提供四个快速模板：
 
@@ -96,13 +95,13 @@ OAuth access token 有效期短且由服务端自动续取。Debug 构建使用
 
 ## 当前验证边界
 
-Android 16 / API 36 真机（设备型号及网络参数已脱敏）已验证普通节点持久恢复、自动 Wi-Fi 子网路由、
+Android 16 / API 36 真机已验证普通节点持久恢复、自动 Wi-Fi 子网路由、
 移动数据救援与断网 fail-closed、Exit Node 真实互联网转发、定时退出、网络变化退出、
 OEM 划卡强杀后的不恢复与补偿清理，以及固定服务器 UI。按用户要求没有重启手机，
 因此手机重启路径只有代码/构建证据，没有本轮物理测试证据。
 
 PinNode 复用官方 backend 的 tailnet 数据面和 DNS/路由能力，但它不是官方客户端 UI
-的完整复刻：本地账号登录、配置编辑和官方客户端的辅助页面被有意替换为受管单屏 UI。
+的完整复刻：本地账号登录、配置编辑和官方客户端的辅助页面被替换为受管单屏 UI。
 
 完整字段、安全边界和逐项证据见：
 
