@@ -30,7 +30,7 @@ type ExitPolicy struct {
 // RescueConfig 是一次服务端受管会话的客户端偏好。
 //
 // 这个结构只描述管理员允许本次会话使用的配置，不包含 Tailscale
-// OAuth secret 或 auth key。默认值刻意保持为“仅发布当前 Wi-Fi 网关 /32”。
+// API access token 或 auth key。默认值刻意保持为“仅发布当前 Wi-Fi 网关 /32”。
 type RescueConfig struct {
 	NetworkMode            string     `json:"networkMode"`
 	VPNEnabled             bool       `json:"vpnEnabled"`

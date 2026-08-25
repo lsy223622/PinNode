@@ -11,13 +11,18 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"sync"
 	"time"
 )
 
 type AuthKey struct {
 	Secret string
 	ID     string
+}
+
+type OAuthAccessToken struct {
+	Token     string
+	ExpiresAt time.Time
+	Scopes    []string
 }
 
 type Device struct {
@@ -31,18 +36,20 @@ type Device struct {
 
 // TailscaleAPI 是服务端需要的最小控制面接口，便于不接触真实 tailnet 地测试清理逻辑。
 type TailscaleAPI interface {
-	CreateAuthKey(context.Context, time.Duration, bool) (AuthKey, error)
-	DeleteAuthKey(context.Context, string) error
-	GetDevice(context.Context, string) (Device, error)
-	SetDeviceRoutes(context.Context, string, []string) error
-	DeleteDevice(context.Context, string) error
+	ExchangeOAuthToken(context.Context, string, string) (OAuthAccessToken, error)
+	ValidateCredential(context.Context, string) error
+	CreateAuthKey(context.Context, string, time.Duration, bool) (AuthKey, error)
+	DeleteAuthKey(context.Context, string, string) error
+	GetDevice(context.Context, string, string) (Device, error)
+	SetDeviceRoutes(context.Context, string, string, []string) error
+	DeleteDevice(context.Context, string, string) error
 }
 
-func (c *TailscaleClient) DeleteAuthKey(ctx context.Context, keyID string) error {
+func (c *TailscaleClient) DeleteAuthKey(ctx context.Context, accessToken, keyID string) error {
 	if keyID == "" {
 		return nil
 	}
-	err := c.doJSON(ctx, http.MethodDelete, c.tailnetURL("keys", keyID), nil, nil)
+	err := c.doJSON(ctx, accessToken, http.MethodDelete, c.tailnetURL("keys", keyID), nil, nil)
 	var apiErr *HTTPError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 		return nil
@@ -51,30 +58,69 @@ func (c *TailscaleClient) DeleteAuthKey(ctx context.Context, keyID string) error
 }
 
 type TailscaleClient struct {
-	baseURL      string
-	tailnet      string
-	clientID     string
-	clientSecret string
-	httpClient   *http.Client
-	userAgent    string
-
-	mu          sync.Mutex
-	accessToken string
-	tokenExpiry time.Time
+	baseURL    string
+	tailnet    string
+	httpClient *http.Client
+	userAgent  string
 }
 
 func NewTailscaleClient(config Config) *TailscaleClient {
 	return &TailscaleClient{
-		baseURL:      strings.TrimRight(config.TailscaleBaseURL, "/"),
-		tailnet:      config.TailscaleTailnet,
-		clientID:     config.OAuthClientID,
-		clientSecret: config.OAuthClientSecret,
-		httpClient:   &http.Client{Timeout: 15 * time.Second},
-		userAgent:    "PinNode/0.1",
+		baseURL:    strings.TrimRight(config.TailscaleBaseURL, "/"),
+		tailnet:    config.TailscaleTailnet,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
+		userAgent:  "PinNode/0.1",
 	}
 }
 
-func (c *TailscaleClient) CreateAuthKey(ctx context.Context, expiry time.Duration, ephemeral bool) (AuthKey, error) {
+func (c *TailscaleClient) ExchangeOAuthToken(ctx context.Context, clientID, clientSecret string) (OAuthAccessToken, error) {
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+	}
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, c.apiURL("oauth", "token"), strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return OAuthAccessToken{}, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
+	response, err := c.httpClient.Do(req)
+	if err != nil {
+		return OAuthAccessToken{}, fmt.Errorf("请求 Tailscale OAuth token 失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode/100 != 2 {
+		return OAuthAccessToken{}, readHTTPError(response)
+	}
+	var payload struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		ExpiresIn   int64  `json:"expires_in"`
+		Scope       string `json:"scope"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+		return OAuthAccessToken{}, fmt.Errorf("解析 Tailscale OAuth token 失败: %w", err)
+	}
+	if payload.AccessToken == "" || payload.ExpiresIn <= 0 || payload.ExpiresIn > 24*60*60 ||
+		(payload.TokenType != "" && !strings.EqualFold(payload.TokenType, "Bearer")) {
+		return OAuthAccessToken{}, errors.New("Tailscale OAuth token 响应不完整")
+	}
+	return OAuthAccessToken{
+		Token:     payload.AccessToken,
+		ExpiresAt: time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second),
+		Scopes:    strings.Fields(payload.Scope),
+	}, nil
+}
+
+func (c *TailscaleClient) ValidateCredential(ctx context.Context, accessToken string) error {
+	return c.doJSON(ctx, accessToken, http.MethodGet, c.tailnetURL("keys"), nil, nil)
+}
+
+func (c *TailscaleClient) CreateAuthKey(ctx context.Context, accessToken string, expiry time.Duration, ephemeral bool) (AuthKey, error) {
 	seconds := int64(expiry / time.Second)
 	if seconds < 1 {
 		return AuthKey{}, errors.New("auth key expiry 必须至少为 1 秒")
@@ -86,7 +132,7 @@ func (c *TailscaleClient) CreateAuthKey(ctx context.Context, expiry time.Duratio
 					"reusable":      false,
 					"ephemeral":     ephemeral,
 					"preauthorized": true,
-					"tags":          []string{"tag:rescue-gateway"},
+					"tags":          []string{managedDeviceTag},
 				},
 			},
 		},
@@ -96,7 +142,7 @@ func (c *TailscaleClient) CreateAuthKey(ctx context.Context, expiry time.Duratio
 		Key string `json:"key"`
 		ID  string `json:"id"`
 	}
-	if err := c.doJSON(ctx, http.MethodPost, c.tailnetURL("keys"), payload, &response); err != nil {
+	if err := c.doJSON(ctx, accessToken, http.MethodPost, c.tailnetURL("keys"), payload, &response); err != nil {
 		return AuthKey{}, err
 	}
 	if response.Key == "" || response.ID == "" {
@@ -105,19 +151,19 @@ func (c *TailscaleClient) CreateAuthKey(ctx context.Context, expiry time.Duratio
 	return AuthKey{Secret: response.Key, ID: response.ID}, nil
 }
 
-func (c *TailscaleClient) GetDevice(ctx context.Context, deviceID string) (Device, error) {
+func (c *TailscaleClient) GetDevice(ctx context.Context, accessToken, deviceID string) (Device, error) {
 	var response Device
-	err := c.doJSON(ctx, http.MethodGet, c.apiURL("device", deviceID), nil, &response)
+	err := c.doJSON(ctx, accessToken, http.MethodGet, c.apiURL("device", deviceID), nil, &response)
 	return response, err
 }
 
-func (c *TailscaleClient) SetDeviceRoutes(ctx context.Context, deviceID string, routes []string) error {
+func (c *TailscaleClient) SetDeviceRoutes(ctx context.Context, accessToken, deviceID string, routes []string) error {
 	payload := map[string][]string{"routes": routes}
-	return c.doJSON(ctx, http.MethodPost, c.apiURL("device", deviceID, "routes"), payload, nil)
+	return c.doJSON(ctx, accessToken, http.MethodPost, c.apiURL("device", deviceID, "routes"), payload, nil)
 }
 
-func (c *TailscaleClient) DeleteDevice(ctx context.Context, deviceID string) error {
-	err := c.doJSON(ctx, http.MethodDelete, c.apiURL("device", deviceID), nil, nil)
+func (c *TailscaleClient) DeleteDevice(ctx context.Context, accessToken, deviceID string) error {
+	err := c.doJSON(ctx, accessToken, http.MethodDelete, c.apiURL("device", deviceID), nil, nil)
 	var apiErr *HTTPError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 		return nil
@@ -125,56 +171,9 @@ func (c *TailscaleClient) DeleteDevice(ctx context.Context, deviceID string) err
 	return err
 }
 
-func (c *TailscaleClient) token(ctx context.Context) (string, error) {
-	now := time.Now()
-	c.mu.Lock()
-	if c.accessToken != "" && now.Before(c.tokenExpiry) {
-		token := c.accessToken
-		c.mu.Unlock()
-		return token, nil
-	}
-	c.mu.Unlock()
-
-	form := url.Values{"grant_type": {"client_credentials"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/oauth/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.SetBasicAuth(c.clientID, c.clientSecret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("请求 Tailscale OAuth token 失败: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode/100 != 2 {
-		return "", readHTTPError(response)
-	}
-	var tokenResponse struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int64  `json:"expires_in"`
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 16<<10)).Decode(&tokenResponse); err != nil {
-		return "", fmt.Errorf("解析 Tailscale OAuth token 失败: %w", err)
-	}
-	if tokenResponse.AccessToken == "" {
-		return "", errors.New("Tailscale OAuth 响应缺少 access_token")
-	}
-	expiresIn := time.Duration(tokenResponse.ExpiresIn) * time.Second
-	if expiresIn <= 0 || expiresIn > time.Hour {
-		expiresIn = time.Hour
-	}
-	c.mu.Lock()
-	c.accessToken = tokenResponse.AccessToken
-	c.tokenExpiry = time.Now().Add(expiresIn - time.Minute)
-	c.mu.Unlock()
-	return tokenResponse.AccessToken, nil
-}
-
-func (c *TailscaleClient) doJSON(ctx context.Context, method, endpoint string, payload any, result any) error {
-	token, err := c.token(ctx)
-	if err != nil {
-		return err
+func (c *TailscaleClient) doJSON(ctx context.Context, accessToken, method, endpoint string, payload any, result any) error {
+	if accessToken == "" {
+		return errors.New("Tailscale API access token 为空")
 	}
 	var body io.Reader
 	if payload != nil {
@@ -188,7 +187,7 @@ func (c *TailscaleClient) doJSON(ctx context.Context, method, endpoint string, p
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", c.userAgent)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")

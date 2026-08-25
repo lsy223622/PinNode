@@ -2,7 +2,10 @@ module pin-node/server
 
 go 1.26.6
 
-require modernc.org/sqlite v1.57.0
+require (
+	golang.org/x/crypto v0.54.0
+	modernc.org/sqlite v1.57.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

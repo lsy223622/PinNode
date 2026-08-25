@@ -84,13 +84,15 @@ go run -tags debug .
 正式服务默认监听 `:6633`，Debug 服务默认监听 `:6634`；设置
 `PINNODE_LISTEN_ADDR` 可覆盖默认端口。
 
-打开 `/` 或 `/admin`，输入 `PINNODE_ADMIN_TOKEN`，选择快速模板或微调设置后生成
-一次性 PIN。管理员令牌只通过 `Authorization: Bearer` 发送，不进入 URL。
+首次打开 `/` 或 `/admin` 时创建唯一管理员账号；后续使用账号密码和本地 PoW 登录。
+登录后添加、命名并选择加密保存的 Tailscale OAuth client（推荐）或 API access token，再选择快速模板或微调
+设置生成一次性 PIN。管理会话使用 HttpOnly Cookie、CSRF 校验、限速和递增退避保护。
 
 服务端只创建 `reusable=false`、`preauthorized=true` 的短期一次性 auth key；加入后的
-Android 设备是非 ephemeral 节点，因此默认能够长期保持登录。OAuth secret 只存在于
-服务端。当前内部仍使用 `tag:rescue-gateway` 作为受限设备标签，这是兼容既有测试
-tailnet 权限的技术名称，不代表 PinNode 只能用于救援。
+Android 设备是非 ephemeral 节点，因此默认能够长期保持登录。Tailscale credential
+只以 AES-256-GCM 密文保存在服务端数据库中；实例根密钥首次启动时自动生成并独立保存。
+OAuth access token 有效期短且由服务端自动续取。Debug 构建使用
+`tag:pinnode-test`，正式构建使用 `tag:pinnode`；OAuth client 必须授权当前构建对应的标签。
 
 ## 当前验证边界
 

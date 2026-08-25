@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -14,15 +13,26 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+type cachedOAuthToken struct {
+	token     string
+	expiresAt time.Time
+}
 
 type Service struct {
 	config    Config
 	store     *Store
 	tailscale TailscaleAPI
 	limiter   *RateLimiter
+	pow       *PoWManager
+	cipher    *CredentialCipher
+	dummyHash string
 	logger    *log.Logger
+	oauthMu   sync.Mutex
+	oauth     map[string]cachedOAuthToken
 }
 
 func NewService(config Config, store *Store, tailscale TailscaleAPI, logger *log.Logger) *Service {
@@ -38,12 +48,30 @@ func NewService(config Config, store *Store, tailscale TailscaleAPI, logger *log
 	if config.HeartbeatTTL <= 0 {
 		config.HeartbeatTTL = 5 * time.Minute
 	}
+	if config.AdminSessionTTL <= 0 {
+		config.AdminSessionTTL = 12 * time.Hour
+	}
+	if config.PoWDifficulty == 0 {
+		config.PoWDifficulty = 18
+	}
+	credentialCipher, err := NewCredentialCipher(config.CredentialKey)
+	if err != nil {
+		panic(err)
+	}
+	dummyHash, err := hashPassword("PinNode dummy password verifier")
+	if err != nil {
+		panic(err)
+	}
 	return &Service{
 		config:    config,
 		store:     store,
 		tailscale: tailscale,
 		limiter:   NewRateLimiter(),
+		pow:       NewPoWManager(),
+		cipher:    credentialCipher,
+		dummyHash: dummyHash,
 		logger:    logger,
+		oauth:     make(map[string]cachedOAuthToken),
 	}
 }
 
@@ -67,6 +95,10 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+	if isSecureRequest(r, s.config.TrustedProxyCIDRs) {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+	}
 	if r.Method == http.MethodOptions {
 		writeError(w, http.StatusMethodNotAllowed, "不支持 OPTIONS")
 		return
@@ -85,6 +117,20 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case r.URL.Path == "/" || r.URL.Path == "/admin":
 		s.serveAdminPage(w, r)
+	case r.URL.Path == "/assets/mark.svg":
+		s.serveAdminMark(w, r)
+	case r.URL.Path == "/v1/auth/state":
+		s.handleAdminAuthState(w, r)
+	case r.URL.Path == "/v1/auth/pow":
+		s.handlePoWChallenge(w, r)
+	case r.URL.Path == "/v1/auth/setup":
+		s.handleAdminSetup(w, r)
+	case r.URL.Path == "/v1/auth/login":
+		s.handleAdminLogin(w, r)
+	case r.URL.Path == "/v1/auth/logout":
+		s.handleAdminLogout(w, r)
+	case r.URL.Path == "/v1/tailscale-credentials":
+		s.handleTailscaleCredentials(w, r)
 	case r.URL.Path == "/v1/pairing-codes":
 		s.handlePairingCode(w, r)
 	case r.URL.Path == "/v1/sessions":
@@ -127,7 +173,7 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
 		return
 	}
-	if !s.allowAdminAuthentication(w, r) || !s.requireAdmin(w, r) {
+	if !s.requireAdminAPI(w, r, true) {
 		return
 	}
 	if !s.allowRate(w, "code:"+clientAddress(r, s.config.TrustedProxyCIDRs), 30, time.Minute) {
@@ -135,6 +181,14 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 	}
 	request := pairingCodeRequest{}
 	if !decodeOptionalJSON(w, r, &request) {
+		return
+	}
+	if request.CredentialID == "" {
+		writeError(w, http.StatusBadRequest, "请选择 Tailscale 管理凭据")
+		return
+	}
+	if _, err := s.credentialToken(r.Context(), request.CredentialID); err != nil {
+		writeError(w, http.StatusBadRequest, "所选 Tailscale 管理凭据不存在或不可用")
 		return
 	}
 	config := DefaultRescueConfig()
@@ -162,7 +216,10 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
-		err = s.store.PutCodeWithConfigAt(hashPairingCode(s.config.CodePepper, code), createdAt, expiresAt, config)
+		err = s.store.PutCodeWithCredentialAt(
+			hashPairingCode(s.config.CodePepper, code), request.CredentialID,
+			createdAt, expiresAt, config,
+		)
 		if err == nil {
 			break
 		}
@@ -183,7 +240,8 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 }
 
 type pairingCodeRequest struct {
-	Config *RescueConfig `json:"config"`
+	CredentialID string        `json:"credentialId"`
+	Config       *RescueConfig `json:"config"`
 }
 
 type startSessionRequest struct {
@@ -228,7 +286,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now()
-	config, configCreatedAt, ok, err := s.store.RedeemCodeDetails(codeHash, now)
+	config, configCreatedAt, credentialID, ok, err := s.store.RedeemCodeWithCredential(codeHash, now)
 	if err != nil {
 		s.logger.Printf("读取配对代码失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "读取配对代码失败")
@@ -236,6 +294,12 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "code 无效、已使用或已过期")
+		return
+	}
+	accessToken, err := s.credentialToken(r.Context(), credentialID)
+	if err != nil {
+		s.logger.Printf("读取 Tailscale 凭据失败: credentialRef=%s error=%v", diagnosticIdentifier(credentialID), err)
+		writeError(w, http.StatusBadGateway, "该授权码关联的 Tailscale 管理凭据不可用")
 		return
 	}
 	if config.RequiresWiFi() && request.GatewayRoute == "" {
@@ -252,7 +316,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authKey, err := s.tailscale.CreateAuthKey(r.Context(), s.config.ProvisioningTTL, false)
+	authKey, err := s.tailscale.CreateAuthKey(r.Context(), accessToken, s.config.ProvisioningTTL, false)
 	if err != nil {
 		// code 已经消耗，避免攻击者通过上游故障反复重放；客户端需要申请新 code。
 		s.logger.Printf("创建 Tailscale auth key 失败: %v", err)
@@ -267,6 +331,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	session := Session{
 		ID:                   sessionToken[:16],
 		TokenHash:            tokenHash,
+		CredentialID:         credentialID,
 		AuthKeyID:            authKey.ID,
 		ProvisioningName:     provisioningHostname(sessionToken[:16]),
 		Route:                request.GatewayRoute,
@@ -280,11 +345,12 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:            now,
 	}
 	if err := s.store.PutSession(session); err != nil {
-		_ = s.tailscale.DeleteAuthKey(r.Context(), authKey.ID)
+		_ = s.tailscale.DeleteAuthKey(r.Context(), accessToken, authKey.ID)
 		s.logger.Printf("保存会话失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "创建会话失败")
 		return
 	}
+	_ = s.store.TouchTailscaleCredential(credentialID, now)
 	heartbeatSeconds := int64(0)
 	if session.Config.ExitPolicy.OnAppClose {
 		heartbeatSeconds = int64(heartbeatInterval(s.config.HeartbeatTTL) / time.Second)
@@ -304,7 +370,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	if !s.allowAdminAuthentication(w, r) || !s.requireAdmin(w, r) {
+	if !s.requireAdminAPI(w, r, false) {
 		return
 	}
 	limit := 100
@@ -403,8 +469,13 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusGone, "会话已过期")
 		return
 	}
+	accessToken, err := s.credentialToken(r.Context(), session.CredentialID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Tailscale 管理凭据不可用")
+		return
+	}
 	if session.Status == SessionActive && session.DeviceID == request.NodeID {
-		if err := s.tailscale.SetDeviceRoutes(r.Context(), request.NodeID, session.Routes); err != nil {
+		if err := s.tailscale.SetDeviceRoutes(r.Context(), accessToken, request.NodeID, session.Routes); err != nil {
 			s.logger.Printf("重新确认设备路由失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
 			writeError(w, http.StatusBadGateway, "启用救援路由失败")
 			return
@@ -420,7 +491,7 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusConflict, "会话已绑定其他设备或正在清理")
 		return
 	}
-	device, err := s.tailscale.GetDevice(r.Context(), request.NodeID)
+	device, err := s.tailscale.GetDevice(r.Context(), accessToken, request.NodeID)
 	if err != nil {
 		writeError(w, http.StatusConflict, "设备尚未在 Tailscale 控制面出现，请稍后重试")
 		return
@@ -429,7 +500,7 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusForbidden, "设备身份与请求不一致")
 		return
 	}
-	if device.IsEphemeral || !hasTag(device.Tags, "tag:rescue-gateway") ||
+	if device.IsEphemeral || !hasTag(device.Tags, managedDeviceTag) ||
 		(!device.Created.IsZero() && device.Created.Before(session.CreatedAt.Add(-30*time.Second))) {
 		writeError(w, http.StatusForbidden, "设备不是本次 PinNode 持久节点")
 		return
@@ -450,7 +521,7 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusConflict, "设备已绑定到其他会话")
 		return
 	}
-	if err := s.tailscale.SetDeviceRoutes(r.Context(), request.NodeID, session.Routes); err != nil {
+	if err := s.tailscale.SetDeviceRoutes(r.Context(), accessToken, request.NodeID, session.Routes); err != nil {
 		_ = s.store.DetachDevice(session.ID, request.NodeID, now)
 		s.logger.Printf("启用设备精确路由失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
 		writeError(w, http.StatusBadGateway, "启用救援路由失败")
@@ -534,20 +605,26 @@ func (s *Service) cleanupSession(ctx context.Context, id string) error {
 		return nil
 	}
 	var cleanupErr error
-	if session.DeviceID != "" {
-		if err := s.tailscale.SetDeviceRoutes(ctx, session.DeviceID, nil); err != nil {
+	accessToken, credentialErr := s.credentialToken(ctx, session.CredentialID)
+	if credentialErr != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("读取 Tailscale 凭据: %w", credentialErr))
+	}
+	if credentialErr == nil && session.DeviceID != "" {
+		if err := s.tailscale.SetDeviceRoutes(ctx, accessToken, session.DeviceID, nil); err != nil {
 			// Android may have logged out before the server cleanup reaches
 			// the control plane, so a missing node is idempotent success.
 			if !isHTTPStatus(err, http.StatusNotFound) {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("撤销设备路由: %w", err))
 			}
 		}
-		if err := s.tailscale.DeleteDevice(ctx, session.DeviceID); err != nil {
+		if err := s.tailscale.DeleteDevice(ctx, accessToken, session.DeviceID); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("删除受管设备: %w", err))
 		}
 	}
-	if err := s.tailscale.DeleteAuthKey(ctx, session.AuthKeyID); err != nil && !isHTTPStatus(err, http.StatusNotFound) {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("撤销 auth key: %w", err))
+	if credentialErr == nil {
+		if err := s.tailscale.DeleteAuthKey(ctx, accessToken, session.AuthKeyID); err != nil && !isHTTPStatus(err, http.StatusNotFound) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("撤销 auth key: %w", err))
+		}
 	}
 	if err := s.store.FinishCleanup(id, time.Now(), cleanupErr); err != nil {
 		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("保存清理状态: %w", err))
@@ -577,20 +654,6 @@ func (s *Service) ReapOnce(ctx context.Context, now time.Time) {
 			s.logger.Printf("会话自动清理失败: sessionRef=%s error=%v", diagnosticIdentifier(session.ID), err)
 		}
 	}
-}
-
-func (s *Service) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if bearerToken(r) == "" || subtle.ConstantTimeCompare([]byte(bearerToken(r)), []byte(s.config.AdminToken)) != 1 {
-		writeError(w, http.StatusUnauthorized, "需要管理员认证")
-		return false
-	}
-	return true
-}
-
-func (s *Service) allowAdminAuthentication(w http.ResponseWriter, r *http.Request) bool {
-	client := clientAddress(r, s.config.TrustedProxyCIDRs)
-	return s.allowRate(w, "admin-source:"+client, 20, 5*time.Minute) &&
-		s.allowRate(w, "admin-credential:"+credentialFingerprint(bearerToken(r)), 10, 5*time.Minute)
 }
 
 func (s *Service) allowRate(w http.ResponseWriter, key string, max int, interval time.Duration) bool {

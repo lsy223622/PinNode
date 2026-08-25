@@ -19,29 +19,52 @@ type fakeTailscale struct {
 	deleted            []string
 	deletedAuthKeys    []string
 	ephemeralRequested []bool
+	accessTokens       []string
+	oauthCalls         int
+	oauthToken         OAuthAccessToken
+	oauthErr           error
 }
 
-func (f *fakeTailscale) CreateAuthKey(_ context.Context, _ time.Duration, ephemeral bool) (AuthKey, error) {
+func (f *fakeTailscale) ExchangeOAuthToken(context.Context, string, string) (OAuthAccessToken, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.oauthCalls++
+	if f.oauthErr != nil {
+		return OAuthAccessToken{}, f.oauthErr
+	}
+	if f.oauthToken.Token != "" {
+		return f.oauthToken, nil
+	}
+	return OAuthAccessToken{
+		Token: "tskey-oauth-test", ExpiresAt: time.Now().Add(time.Hour),
+		Scopes: []string{"auth_keys", "devices:core", "devices:routes"},
+	}, nil
+}
+
+func (f *fakeTailscale) ValidateCredential(context.Context, string) error { return nil }
+
+func (f *fakeTailscale) CreateAuthKey(_ context.Context, accessToken string, _ time.Duration, ephemeral bool) (AuthKey, error) {
 	f.mu.Lock()
 	f.ephemeralRequested = append(f.ephemeralRequested, ephemeral)
+	f.accessTokens = append(f.accessTokens, accessToken)
 	f.mu.Unlock()
 	return AuthKey{Secret: "tskey-test", ID: "k-test"}, nil
 }
 
-func (f *fakeTailscale) DeleteAuthKey(_ context.Context, id string) error {
+func (f *fakeTailscale) DeleteAuthKey(_ context.Context, _ string, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedAuthKeys = append(f.deletedAuthKeys, id)
 	return nil
 }
 
-func (f *fakeTailscale) GetDevice(context.Context, string) (Device, error) {
+func (f *fakeTailscale) GetDevice(context.Context, string, string) (Device, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.device, nil
 }
 
-func (f *fakeTailscale) SetDeviceRoutes(_ context.Context, id string, routes []string) error {
+func (f *fakeTailscale) SetDeviceRoutes(_ context.Context, _ string, id string, routes []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.routes == nil {
@@ -55,28 +78,86 @@ func (f *fakeTailscale) SetDeviceRoutes(_ context.Context, id string, routes []s
 	return nil
 }
 
-func (f *fakeTailscale) DeleteDevice(_ context.Context, id string) error {
+func (f *fakeTailscale) DeleteDevice(_ context.Context, _ string, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, id)
 	return nil
 }
 
-func TestSessionProvisionAndCleanup(t *testing.T) {
-	fake := &fakeTailscale{device: Device{NodeID: "n-test", Tags: []string{"tag:rescue-gateway"}}}
-	config := Config{
-		CodePepper: "test-pepper",
-		AdminToken: "test-admin-token",
-		CodeTTL:    5 * time.Minute,
+type testAdminAuthentication struct {
+	CookieValue string
+	CSRFToken   string
+}
+
+func testServiceConfig() Config {
+	return Config{
+		CodePepper:       "test-pepper-used-only-by-unit-tests",
+		CredentialKey:    []byte("0123456789abcdef0123456789abcdef"),
+		CodeTTL:          5 * time.Minute,
+		AdminSessionTTL:  time.Hour,
+		PoWDifficulty:    16,
+		AllowRemoteSetup: true,
 	}
-	service := NewService(config, NewStore(), fake, nil)
+}
+
+func installTestAdminAndCredential(t *testing.T, service *Service, store *Store) (testAdminAuthentication, string) {
+	t.Helper()
+	now := time.Now()
+	passwordHash, err := hashPassword("unit test administrator password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateAdmin("admin", passwordHash, now)
+	if err != nil || !created {
+		t.Fatalf("创建测试管理员: created=%v err=%v", created, err)
+	}
+	token, err := newURLToken(32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := base64RawURLDecode(token)
+	csrfToken := "test-csrf-token"
+	if err := store.PutAdminSession(AdminSession{
+		TokenHash: sha256Bytes(raw), AdminID: 1, CSRFToken: csrfToken,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	credentialID := "test-credential"
+	ciphertext, err := service.cipher.Seal(credentialID, "tskey-api-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutTailscaleCredential(TailscaleCredential{
+		ID: credentialID, Name: "测试 Tailnet", Ciphertext: ciphertext,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return testAdminAuthentication{CookieValue: token, CSRFToken: csrfToken}, credentialID
+}
+
+func authorizeTestAdmin(request *http.Request, authentication testAdminAuthentication, write bool) {
+	request.AddCookie(&http.Cookie{Name: adminSessionCookie, Value: authentication.CookieValue})
+	if write {
+		request.Header.Set("X-CSRF-Token", authentication.CSRFToken)
+	}
+}
+
+func TestSessionProvisionAndCleanup(t *testing.T) {
+	fake := &fakeTailscale{device: Device{NodeID: "n-test", Tags: []string{managedDeviceTag}}}
+	config := testServiceConfig()
+	store := NewStore()
+	service := NewService(config, store, fake, nil)
+	adminAuthentication, credentialID := installTestAdminAndCredential(t, service, store)
 
 	codeRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/v1/pairing-codes",
-		strings.NewReader(`{"config":{"networkMode":"default","exitPolicy":{"onAppClose":true}}}`),
+		strings.NewReader(`{"credentialId":"`+credentialID+`","config":{"networkMode":"default","exitPolicy":{"onAppClose":true}}}`),
 	)
-	codeRequest.Header.Set("Authorization", "Bearer "+config.AdminToken)
+	authorizeTestAdmin(codeRequest, adminAuthentication, true)
 	codeResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(codeResponse, codeRequest)
 	if codeResponse.Code != http.StatusCreated {
@@ -121,6 +202,10 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 		fake.mu.Unlock()
 		t.Fatalf("默认节点不应使用 ephemeral auth key: %v", fake.ephemeralRequested)
 	}
+	if len(fake.accessTokens) != 1 || fake.accessTokens[0] != "tskey-api-test" {
+		fake.mu.Unlock()
+		t.Fatalf("供应未使用所选的加密凭据: %v", fake.accessTokens)
+	}
 	fake.mu.Unlock()
 
 	attachBody := `{"nodeId":"n-test"}`
@@ -149,7 +234,7 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 		t.Fatalf("停止会话返回 %d: %s", stopResponse.Code, stopResponse.Body.String())
 	}
 	historyRequest := httptest.NewRequest(http.MethodGet, "/v1/sessions?limit=10", nil)
-	historyRequest.Header.Set("Authorization", "Bearer "+config.AdminToken)
+	authorizeTestAdmin(historyRequest, adminAuthentication, false)
 	historyResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(historyResponse, historyRequest)
 	if historyResponse.Code != http.StatusOK ||
@@ -174,12 +259,14 @@ func TestAttachRejectsDeviceWithoutProvisioningChallenge(t *testing.T) {
 			NodeID:   "n-existing",
 			Hostname: "another-pinnode",
 			Created:  time.Now().Add(-time.Hour),
-			Tags:     []string{"tag:rescue-gateway"},
+			Tags:     []string{managedDeviceTag},
 		},
 	}
-	config := Config{CodePepper: "test-pepper", AdminToken: "test-admin-token", CodeTTL: time.Minute}
-	service := NewService(config, NewStore(), fake, nil)
-	code := createTestPairingCode(t, service, config.AdminToken)
+	config := testServiceConfig()
+	store := NewStore()
+	service := NewService(config, store, fake, nil)
+	adminAuthentication, credentialID := installTestAdminAndCredential(t, service, store)
+	code := createTestPairingCode(t, service, adminAuthentication, credentialID)
 
 	startRequest := httptest.NewRequest(
 		http.MethodPost,
@@ -211,10 +298,13 @@ func TestAttachRejectsDeviceWithoutProvisioningChallenge(t *testing.T) {
 	}
 }
 
-func createTestPairingCode(t *testing.T, service *Service, adminToken string) string {
+func createTestPairingCode(t *testing.T, service *Service, authentication testAdminAuthentication, credentialID string) string {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/v1/pairing-codes", nil)
-	request.Header.Set("Authorization", "Bearer "+adminToken)
+	request := httptest.NewRequest(
+		http.MethodPost, "/v1/pairing-codes",
+		strings.NewReader(`{"credentialId":"`+credentialID+`"}`),
+	)
+	authorizeTestAdmin(request, authentication, true)
 	response := httptest.NewRecorder()
 	service.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
@@ -230,17 +320,14 @@ func createTestPairingCode(t *testing.T, service *Service, adminToken string) st
 }
 
 func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
-	fake := &fakeTailscale{device: Device{NodeID: "n-configured", Tags: []string{"tag:rescue-gateway"}}}
-	config := Config{
-		CodePepper: "test-pepper",
-		AdminToken: "test-admin-token",
-		CodeTTL:    5 * time.Minute,
-	}
+	fake := &fakeTailscale{device: Device{NodeID: "n-configured", Tags: []string{managedDeviceTag}}}
+	config := testServiceConfig()
 	store := NewStore()
 	service := NewService(config, store, fake, nil)
+	adminAuthentication, credentialID := installTestAdminAndCredential(t, service, store)
 
-	codeRequest := httptest.NewRequest(http.MethodPost, "/v1/pairing-codes", strings.NewReader(`{"config":{"vpnEnabled":false,"acceptRoutes":false,"acceptDNS":false,"subnetRouter":true,"autoGatewayRoute":false,"advertiseRoutes":["192.168.1.0/24"]}}`))
-	codeRequest.Header.Set("Authorization", "Bearer "+config.AdminToken)
+	codeRequest := httptest.NewRequest(http.MethodPost, "/v1/pairing-codes", strings.NewReader(`{"credentialId":"`+credentialID+`","config":{"vpnEnabled":false,"acceptRoutes":false,"acceptDNS":false,"subnetRouter":true,"autoGatewayRoute":false,"advertiseRoutes":["192.168.1.0/24"]}}`))
+	authorizeTestAdmin(codeRequest, adminAuthentication, true)
 	codeResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(codeResponse, codeRequest)
 	if codeResponse.Code != http.StatusCreated {
@@ -320,12 +407,38 @@ func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
 }
 
 func TestAdminPageIsEmbedded(t *testing.T) {
-	service := NewService(Config{}, NewStore(), &fakeTailscale{}, nil)
+	service := NewService(testServiceConfig(), NewStore(), &fakeTailscale{}, nil)
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 	service.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "PinNode 快速配置") {
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), "创建管理员账号") ||
+		!strings.Contains(response.Body.String(), "Tailscale 管理凭据") ||
+		!strings.Contains(response.Body.String(), managedDeviceTag) ||
+		!strings.Contains(response.Body.String(), "https://console.tailscale.com/admin/settings/trust-credentials/add") ||
+		!strings.Contains(response.Body.String(), `id="credential-add-form" class="field-row" hidden`) ||
+		!strings.Contains(response.Body.String(), `href="#top" data-section="templates" aria-current="location"`) ||
+		!strings.Contains(response.Body.String(), "/assets/mark.svg") ||
+		strings.Contains(response.Body.String(), "本地 PoW 验证 · 不依赖第三方验证码服务") ||
+		strings.Contains(response.Body.String(), "admin-token") ||
+		strings.Contains(response.Body.String(), "{{CSP_NONCE}}") ||
+		strings.Contains(response.Body.String(), "{{MANAGED_DEVICE_TAG}}") ||
+		strings.Contains(response.Body.String(), "{{BUILD_BADGE}}") ||
+		!strings.Contains(response.Header().Get("Content-Security-Policy"), "'nonce-") ||
+		!strings.Contains(response.Header().Get("Content-Security-Policy"), "img-src 'self'") ||
+		strings.Contains(response.Header().Get("Content-Security-Policy"), "unsafe-inline") {
 		t.Fatalf("管理页面没有正确嵌入: code=%d body=%q", response.Code, response.Body.String())
+	}
+	if hasBadge := strings.Contains(response.Body.String(), `class="build-badge">DEBUG</span>`); hasBadge != debugBuild {
+		t.Fatalf("管理页面构建标识错误: debug=%v badge=%v", debugBuild, hasBadge)
+	}
+	markRequest := httptest.NewRequest(http.MethodGet, "/assets/mark.svg", nil)
+	markResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(markResponse, markRequest)
+	if markResponse.Code != http.StatusOK ||
+		markResponse.Header().Get("Content-Type") != "image/svg+xml" ||
+		!strings.Contains(markResponse.Body.String(), "<circle") {
+		t.Fatalf("管理页面图标没有正确嵌入: code=%d contentType=%q", markResponse.Code, markResponse.Header().Get("Content-Type"))
 	}
 }
 

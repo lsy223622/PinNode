@@ -44,7 +44,7 @@
 ## 部署限制
 
 - 六位 PIN 不是强身份凭据；生产部署必须使用 HTTPS、管理员认证、外层限流、最小
-  OAuth 权限和精确 ACL/route approval。
+  管理端暴露范围、最小权限 OAuth client（或定期轮换的 API token）和精确 ACL/route approval。
 - 服务端本身不终止 TLS，需置于安全反向代理或服务网关后。
 - 当前测试部署的反向代理入站依赖 Tailscale 直连，但自定义 DERP 不可达；NAT 映射过期
   后请求会在到达应用前超时，本机主动 ping 只能暂时恢复。发布前必须修复 DERP 或把

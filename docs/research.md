@@ -111,13 +111,14 @@ Content-Type: application/json
 
 服务端 `server/`：
 
-1. 管理员通过 `POST /v1/pairing-codes` 创建五分钟有效的六位代码。
+1. 管理员完成账号登录并选择已加密保存的 Tailscale OAuth client 或 API access token，再通过
+   `POST /v1/pairing-codes` 创建五分钟有效的六位代码。
 2. 代码只保存 HMAC 摘要，并在同一把锁中原子消费；同一个代码只能成功一次。
 3. 手机把代码和检测到的 `gateway/32` 发送到 `POST /v1/sessions`。
-4. 服务端使用只配置在服务端的 OAuth client secret，通过 Tailscale API 创建
-   `tag:rescue-gateway`、`ephemeral=false`、`reusable=false`、
+4. 服务端解密与该 PIN 绑定的凭据；OAuth client 会自动换取短期 access token，再通过 Tailscale API 创建
+   带当前构建标签（Debug 为 `tag:pinnode-test`，正式版为 `tag:pinnode`）、`ephemeral=false`、`reusable=false`、
    `preauthorized=true` 的一次性 auth key。短期的是登录 key，不是加入后的节点。
-5. 服务端只把一次性 auth key 和高熵会话令牌返回手机；OAuth secret 不进入 APK。
+5. 服务端只把一次性 auth key 和高熵会话令牌返回手机；OAuth secret/API token 不进入 APK。
 6. 手机加入 tailnet 后报告 node ID；服务端验证设备是带目标 tag 的非 ephemeral
    节点，再启用配置的 `routes`。响应同时包含 `wifiRoutes`，用于 Android 只把
    家庭 LAN 目标绑定到 Wi-Fi；Exit Node 默认路由不会进入该列表。
@@ -131,7 +132,7 @@ Exit Node 广告对应 `AdvertiseRoutes`；还覆盖 `WantRunning`、`ShieldsUp`
 SSH/Web client、posture、SNAT/过滤和 RemoteConfig。Linux-only 的
 `OperatorUser`、`ForceDaemon`、relay server 等没有伪装成 Android 可用选项。
 
-参考：[OAuth clients](https://tailscale.com/docs/features/oauth-clients)、
+参考：[Tailscale API](https://tailscale.com/docs/reference/tailscale-api)、
 [Auth keys](https://tailscale.com/docs/features/access-control/auth-keys)、
 [Ephemeral nodes](https://tailscale.com/docs/features/ephemeral-nodes)、
 [Route injection](https://tailscale.com/docs/reference/route-injection)。

@@ -12,12 +12,49 @@ import (
 )
 
 type PairingCode struct {
-	Hash      string
+	Hash         string
+	CredentialID string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+	UsedAt       time.Time
+	Config       RescueConfig
+}
+
+type AdminUser struct {
+	ID             int64
+	Username       string
+	PasswordHash   string
+	FailedAttempts int
+	LockedUntil    time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type AdminSession struct {
+	TokenHash string
+	AdminID   int64
+	Username  string
+	CSRFToken string
 	CreatedAt time.Time
 	ExpiresAt time.Time
-	UsedAt    time.Time
-	Config    RescueConfig
 }
+
+type TailscaleCredential struct {
+	ID         string
+	Name       string
+	Kind       TailscaleCredentialKind
+	Ciphertext []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	LastUsedAt time.Time
+}
+
+type TailscaleCredentialKind string
+
+const (
+	TailscaleCredentialAPIToken    TailscaleCredentialKind = "api_token"
+	TailscaleCredentialOAuthClient TailscaleCredentialKind = "oauth_client"
+)
 
 type SessionStatus string
 
@@ -32,6 +69,7 @@ const (
 type Session struct {
 	ID                   string
 	TokenHash            string
+	CredentialID         string
 	AuthKeyID            string
 	ProvisioningName     string
 	Route                string
@@ -96,6 +134,7 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS pairing_codes (
 			hash TEXT PRIMARY KEY,
+			credential_id TEXT,
 			created_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL,
 			used_at INTEGER,
@@ -104,6 +143,7 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
 			token_hash TEXT NOT NULL,
+			credential_id TEXT,
 			auth_key_id TEXT NOT NULL,
 			provisioning_name TEXT NOT NULL UNIQUE,
 			route TEXT NOT NULL,
@@ -125,6 +165,32 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS sessions_reap_idx
 			ON sessions(status, provisioning_deadline, expires_at, heartbeat_deadline, cleanup_after)`,
+		`CREATE TABLE IF NOT EXISTS admin_users (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			password_hash TEXT NOT NULL,
+			failed_attempts INTEGER NOT NULL DEFAULT 0,
+			locked_until INTEGER,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS admin_sessions (
+			token_hash TEXT PRIMARY KEY,
+			admin_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+			csrf_token TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS admin_sessions_expiry_idx ON admin_sessions(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS tailscale_credentials (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			kind TEXT NOT NULL DEFAULT 'api_token',
+			token_cipher BLOB NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			last_used_at INTEGER
+		)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, unixepoch() * 1000)`,
 		`UPDATE sessions SET heartbeat_deadline = NULL
 			WHERE heartbeat_deadline IS NOT NULL
@@ -136,7 +202,261 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("迁移 SQLite 数据库: %w", err)
 		}
 	}
+	if err := s.ensureColumn("pairing_codes", "credential_id", "credential_id TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sessions", "credential_id", "credential_id TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("tailscale_credentials", "kind", "kind TEXT NOT NULL DEFAULT 'api_token'"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, unixepoch() * 1000)`); err != nil {
+		return fmt.Errorf("记录 SQLite 迁移: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, unixepoch() * 1000)`); err != nil {
+		return fmt.Errorf("记录 SQLite 迁移: %w", err)
+	}
 	return nil
+}
+
+func (s *Store) ensureColumn(table, column, definition string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return fmt.Errorf("检查 SQLite 列 %s.%s: %w", table, column, err)
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + definition); err != nil {
+		return fmt.Errorf("添加 SQLite 列 %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+func (s *Store) AdminExists() (bool, error) {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM admin_users`).Scan(&count); err != nil {
+		return false, fmt.Errorf("检查管理员账号: %w", err)
+	}
+	return count != 0, nil
+}
+
+func (s *Store) CreateAdmin(username, passwordHash string, now time.Time) (bool, error) {
+	result, err := s.db.Exec(
+		`INSERT INTO admin_users(id, username, password_hash, created_at, updated_at)
+		 SELECT 1, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM admin_users)`,
+		username, passwordHash, toMillis(now), toMillis(now),
+	)
+	if err != nil {
+		return false, fmt.Errorf("创建管理员账号: %w", err)
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) GetAdminByUsername(username string) (AdminUser, bool, error) {
+	var admin AdminUser
+	var lockedUntil sql.NullInt64
+	var createdAt, updatedAt int64
+	err := s.db.QueryRow(
+		`SELECT id, username, password_hash, failed_attempts, locked_until, created_at, updated_at
+		 FROM admin_users WHERE username = ? COLLATE NOCASE`, username,
+	).Scan(
+		&admin.ID, &admin.Username, &admin.PasswordHash, &admin.FailedAttempts,
+		&lockedUntil, &createdAt, &updatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminUser{}, false, nil
+	}
+	if err != nil {
+		return AdminUser{}, false, fmt.Errorf("读取管理员账号: %w", err)
+	}
+	admin.LockedUntil = fromNullableMillis(lockedUntil)
+	admin.CreatedAt = fromMillis(createdAt)
+	admin.UpdatedAt = fromMillis(updatedAt)
+	return admin, true, nil
+}
+
+func (s *Store) RecordAdminLoginFailure(adminID int64, now time.Time) (time.Time, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer tx.Rollback()
+	var failures int
+	if err := tx.QueryRow(`SELECT failed_attempts FROM admin_users WHERE id = ?`, adminID).Scan(&failures); err != nil {
+		return time.Time{}, err
+	}
+	failures++
+	var lockedUntil time.Time
+	if failures > 3 {
+		exponent := failures - 4
+		if exponent > 9 {
+			exponent = 9
+		}
+		lockedUntil = now.Add(time.Duration(1<<exponent) * time.Second)
+	}
+	if _, err := tx.Exec(
+		`UPDATE admin_users SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?`,
+		failures, nullableMillis(lockedUntil), toMillis(now), adminID,
+	); err != nil {
+		return time.Time{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return time.Time{}, err
+	}
+	return lockedUntil, nil
+}
+
+func (s *Store) ResetAdminLoginFailures(adminID int64, now time.Time) error {
+	_, err := s.db.Exec(
+		`UPDATE admin_users SET failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?`,
+		toMillis(now), adminID,
+	)
+	return err
+}
+
+func (s *Store) PutAdminSession(session AdminSession) error {
+	_, err := s.db.Exec(
+		`INSERT INTO admin_sessions(token_hash, admin_id, csrf_token, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		session.TokenHash, session.AdminID, session.CSRFToken,
+		toMillis(session.CreatedAt), toMillis(session.ExpiresAt),
+	)
+	if err != nil {
+		return fmt.Errorf("保存管理员会话: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetAdminSession(tokenHash string, now time.Time) (AdminSession, bool, error) {
+	_, _ = s.db.Exec(`DELETE FROM admin_sessions WHERE expires_at <= ?`, toMillis(now))
+	var session AdminSession
+	var createdAt, expiresAt int64
+	err := s.db.QueryRow(
+		`SELECT s.token_hash, s.admin_id, u.username, s.csrf_token, s.created_at, s.expires_at
+		 FROM admin_sessions s JOIN admin_users u ON u.id = s.admin_id
+		 WHERE s.token_hash = ? AND s.expires_at > ?`, tokenHash, toMillis(now),
+	).Scan(
+		&session.TokenHash, &session.AdminID, &session.Username, &session.CSRFToken,
+		&createdAt, &expiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminSession{}, false, nil
+	}
+	if err != nil {
+		return AdminSession{}, false, fmt.Errorf("读取管理员会话: %w", err)
+	}
+	session.CreatedAt = fromMillis(createdAt)
+	session.ExpiresAt = fromMillis(expiresAt)
+	return session, true, nil
+}
+
+func (s *Store) DeleteAdminSession(tokenHash string) error {
+	_, err := s.db.Exec(`DELETE FROM admin_sessions WHERE token_hash = ?`, tokenHash)
+	return err
+}
+
+func (s *Store) PutTailscaleCredential(credential TailscaleCredential) error {
+	if credential.Kind == "" {
+		credential.Kind = TailscaleCredentialAPIToken
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("开始保存 Tailscale 凭据: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
+		`INSERT INTO tailscale_credentials(id, name, kind, token_cipher, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		credential.ID, credential.Name, credential.Kind, credential.Ciphertext,
+		toMillis(credential.CreatedAt), toMillis(credential.UpdatedAt),
+	); err != nil {
+		return fmt.Errorf("保存 Tailscale 凭据: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE pairing_codes SET credential_id = ? WHERE credential_id IS NULL`, credential.ID); err != nil {
+		return fmt.Errorf("迁移配对代码凭据: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET credential_id = ? WHERE credential_id IS NULL`, credential.ID); err != nil {
+		return fmt.Errorf("迁移会话凭据: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交 Tailscale 凭据: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListTailscaleCredentials() ([]TailscaleCredential, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, kind, token_cipher, created_at, updated_at, last_used_at
+		 FROM tailscale_credentials ORDER BY name COLLATE NOCASE`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var credentials []TailscaleCredential
+	for rows.Next() {
+		credential, err := scanTailscaleCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		credentials = append(credentials, credential)
+	}
+	return credentials, rows.Err()
+}
+
+func (s *Store) GetTailscaleCredential(id string) (TailscaleCredential, bool, error) {
+	credential, err := scanTailscaleCredential(s.db.QueryRow(
+		`SELECT id, name, kind, token_cipher, created_at, updated_at, last_used_at
+		 FROM tailscale_credentials WHERE id = ?`, id,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return TailscaleCredential{}, false, nil
+	}
+	if err != nil {
+		return TailscaleCredential{}, false, err
+	}
+	return credential, true, nil
+}
+
+func (s *Store) TouchTailscaleCredential(id string, now time.Time) error {
+	_, err := s.db.Exec(`UPDATE tailscale_credentials SET last_used_at = ? WHERE id = ?`, toMillis(now), id)
+	return err
+}
+
+func scanTailscaleCredential(scanner rowScanner) (TailscaleCredential, error) {
+	var credential TailscaleCredential
+	var createdAt, updatedAt int64
+	var lastUsedAt sql.NullInt64
+	if err := scanner.Scan(
+		&credential.ID, &credential.Name, &credential.Kind, &credential.Ciphertext,
+		&createdAt, &updatedAt, &lastUsedAt,
+	); err != nil {
+		return TailscaleCredential{}, err
+	}
+	credential.CreatedAt = fromMillis(createdAt)
+	credential.UpdatedAt = fromMillis(updatedAt)
+	credential.LastUsedAt = fromNullableMillis(lastUsedAt)
+	return credential, nil
 }
 
 func (s *Store) PutCode(hash string, expiresAt time.Time) error {
@@ -148,13 +468,17 @@ func (s *Store) PutCodeWithConfig(hash string, expiresAt time.Time, config Rescu
 }
 
 func (s *Store) PutCodeWithConfigAt(hash string, createdAt, expiresAt time.Time, config RescueConfig) error {
+	return s.PutCodeWithCredentialAt(hash, "", createdAt, expiresAt, config)
+}
+
+func (s *Store) PutCodeWithCredentialAt(hash, credentialID string, createdAt, expiresAt time.Time, config RescueConfig) error {
 	encoded, err := json.Marshal(cloneRescueConfig(config))
 	if err != nil {
 		return fmt.Errorf("编码配对配置: %w", err)
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO pairing_codes(hash, created_at, expires_at, config_json) VALUES (?, ?, ?, ?)`,
-		hash, toMillis(createdAt), toMillis(expiresAt), string(encoded),
+		`INSERT INTO pairing_codes(hash, credential_id, created_at, expires_at, config_json) VALUES (?, NULLIF(?, ''), ?, ?, ?)`,
+		hash, credentialID, toMillis(createdAt), toMillis(expiresAt), string(encoded),
 	)
 	if err != nil {
 		return fmt.Errorf("保存配对代码: %w", err)
@@ -163,19 +487,24 @@ func (s *Store) PutCodeWithConfigAt(hash string, createdAt, expiresAt time.Time,
 }
 
 func (s *Store) ConsumeCode(hash string, now time.Time) (bool, error) {
-	_, _, ok, err := s.RedeemCodeDetails(hash, now)
+	_, _, _, ok, err := s.RedeemCodeWithCredential(hash, now)
 	return ok, err
 }
 
 func (s *Store) RedeemCode(hash string, now time.Time) (RescueConfig, bool, error) {
-	config, _, ok, err := s.RedeemCodeDetails(hash, now)
+	config, _, _, ok, err := s.RedeemCodeWithCredential(hash, now)
 	return config, ok, err
 }
 
 func (s *Store) RedeemCodeDetails(hash string, now time.Time) (RescueConfig, time.Time, bool, error) {
+	config, createdAt, _, ok, err := s.RedeemCodeWithCredential(hash, now)
+	return config, createdAt, ok, err
+}
+
+func (s *Store) RedeemCodeWithCredential(hash string, now time.Time) (RescueConfig, time.Time, string, bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return RescueConfig{}, time.Time{}, false, err
+		return RescueConfig{}, time.Time{}, "", false, err
 	}
 	defer tx.Rollback()
 	result, err := tx.Exec(
@@ -184,27 +513,28 @@ func (s *Store) RedeemCodeDetails(hash string, now time.Time) (RescueConfig, tim
 		toMillis(now), hash, toMillis(now),
 	)
 	if err != nil {
-		return RescueConfig{}, time.Time{}, false, fmt.Errorf("消费配对代码: %w", err)
+		return RescueConfig{}, time.Time{}, "", false, fmt.Errorf("消费配对代码: %w", err)
 	}
 	count, err := result.RowsAffected()
 	if err != nil || count != 1 {
-		return RescueConfig{}, time.Time{}, false, err
+		return RescueConfig{}, time.Time{}, "", false, err
 	}
 	var createdAt int64
 	var encoded string
+	var credentialID sql.NullString
 	if err := tx.QueryRow(
-		`SELECT created_at, config_json FROM pairing_codes WHERE hash = ?`, hash,
-	).Scan(&createdAt, &encoded); err != nil {
-		return RescueConfig{}, time.Time{}, false, fmt.Errorf("读取配对配置: %w", err)
+		`SELECT created_at, config_json, credential_id FROM pairing_codes WHERE hash = ?`, hash,
+	).Scan(&createdAt, &encoded, &credentialID); err != nil {
+		return RescueConfig{}, time.Time{}, "", false, fmt.Errorf("读取配对配置: %w", err)
 	}
 	var config RescueConfig
 	if err := json.Unmarshal([]byte(encoded), &config); err != nil {
-		return RescueConfig{}, time.Time{}, false, fmt.Errorf("解析配对配置: %w", err)
+		return RescueConfig{}, time.Time{}, "", false, fmt.Errorf("解析配对配置: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return RescueConfig{}, time.Time{}, false, err
+		return RescueConfig{}, time.Time{}, "", false, err
 	}
-	return cloneRescueConfig(config), fromMillis(createdAt), true, nil
+	return cloneRescueConfig(config), fromMillis(createdAt), credentialID.String, true, nil
 }
 
 func (s *Store) PutSession(session Session) error {
@@ -217,12 +547,12 @@ func (s *Store) PutSession(session Session) error {
 	}
 	_, err = s.db.Exec(
 		`INSERT INTO sessions(
-			id, token_hash, auth_key_id, provisioning_name, route, routes_json,
+			id, token_hash, credential_id, auth_key_id, provisioning_name, route, routes_json,
 			wifi_routes_json, config_json, device_id, created_at,
 			provisioning_deadline, expires_at, last_seen_at, heartbeat_deadline,
 			status, cleanup_error, cleanup_after, stopped_at, stop_reason, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.TokenHash, session.AuthKeyID, session.ProvisioningName,
+		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.TokenHash, session.CredentialID, session.AuthKeyID, session.ProvisioningName,
 		session.Route, routes, wifiRoutes, config, session.DeviceID,
 		toMillis(session.CreatedAt), nullableMillis(session.ProvisioningDeadline),
 		nullableMillis(session.ExpiresAt), nullableMillis(session.LastSeenAt),
@@ -422,7 +752,7 @@ func (s *Store) ListSessions(limit int) ([]Session, error) {
 }
 
 const sessionSelect = `SELECT
-	id, token_hash, auth_key_id, provisioning_name, route, routes_json,
+	id, token_hash, COALESCE(credential_id, ''), auth_key_id, provisioning_name, route, routes_json,
 	wifi_routes_json, config_json, COALESCE(device_id, ''), created_at,
 	provisioning_deadline, expires_at, last_seen_at, heartbeat_deadline,
 	status, cleanup_error, cleanup_after, stopped_at, stop_reason, updated_at
@@ -439,7 +769,7 @@ func scanSession(scanner rowScanner) (Session, error) {
 	var cleanupAfter, stoppedAt sql.NullInt64
 	var createdAt, updatedAt int64
 	err := scanner.Scan(
-		&session.ID, &session.TokenHash, &session.AuthKeyID, &session.ProvisioningName,
+		&session.ID, &session.TokenHash, &session.CredentialID, &session.AuthKeyID, &session.ProvisioningName,
 		&session.Route, &routes, &wifiRoutes, &config, &session.DeviceID, &createdAt,
 		&provisioningDeadline, &expiresAt, &lastSeenAt, &heartbeatDeadline,
 		&session.Status, &session.CleanupErr, &cleanupAfter, &stoppedAt,

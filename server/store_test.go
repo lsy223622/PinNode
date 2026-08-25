@@ -1,12 +1,51 @@
 package main
 
 import (
+	"database/sql"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestLegacyCredentialMigrationDefaultsToAPIToken(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE tailscale_credentials (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+		token_cipher BLOB NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		last_used_at INTEGER
+	)`)
+	if err == nil {
+		_, err = db.Exec(
+			`INSERT INTO tailscale_credentials(id, name, token_cipher, created_at, updated_at)
+			 VALUES ('legacy', '旧 API token', X'0102', 1, 1)`,
+		)
+	}
+	if closeErr := db.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	credential, ok, err := store.GetTailscaleCredential("legacy")
+	if err != nil || !ok || credential.Kind != TailscaleCredentialAPIToken {
+		t.Fatalf("旧凭据迁移错误: kind=%q ok=%v err=%v", credential.Kind, ok, err)
+	}
+}
 
 func TestConsumeCodeIsAtomicAndSingleUse(t *testing.T) {
 	store := NewStore()
@@ -135,6 +174,34 @@ func TestSessionHistorySurvivesDatabaseReopen(t *testing.T) {
 	}
 	if !ok || session.AuthKeyID != "k-test" || len(session.Routes) != 1 || !session.CreatedAt.Equal(now) {
 		t.Fatalf("重启后会话历史不完整: %+v", session)
+	}
+}
+
+func TestFirstStoredCredentialBackfillsExistingProvisioningState(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+	now := time.Now()
+	if err := store.PutCode("legacy-code", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutSession(Session{
+		ID: "legacy-session", CreatedAt: now, Status: SessionProvisioning, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutTailscaleCredential(TailscaleCredential{
+		ID: "credential", Name: "default", Ciphertext: []byte("ciphertext"),
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, credentialID, ok, err := store.RedeemCodeWithCredential("legacy-code", now)
+	if err != nil || !ok || credentialID != "credential" {
+		t.Fatalf("既有配对代码未绑定首个凭据: id=%q ok=%v err=%v", credentialID, ok, err)
+	}
+	session, ok, err := store.GetSession("legacy-session")
+	if err != nil || !ok || session.CredentialID != "credential" {
+		t.Fatalf("既有会话未绑定首个凭据: %+v ok=%v err=%v", session, ok, err)
 	}
 }
 

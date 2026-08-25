@@ -4,16 +4,13 @@
 package com.tailscale.ipn.ui.view
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import com.tailscale.ipn.ui.theme.onBackgroundLogoDotDisabled
 import com.tailscale.ipn.ui.theme.onBackgroundLogoDotEnabled
 import com.tailscale.ipn.ui.theme.standaloneLogoDotDisabled
@@ -26,12 +23,11 @@ import kotlinx.coroutines.flow.StateFlow
 // DotsMatrix represents the state of the progress indicator.
 typealias DotsMatrix = List<List<Boolean>>
 
-// The initial DotsMatrix that represents the Tailscale logo (T-shaped).
 val logoDotsMatrix: DotsMatrix =
     listOf(
-        listOf(false, false, false),
-        listOf(true, true, true),
-        listOf(false, true, false),
+        listOf(true, true, false),
+        listOf(true, true, false),
+        listOf(true, false, false),
     )
 
 @Composable
@@ -71,29 +67,21 @@ fun TailscaleLogoView(
     timer(period = 300L) { advanceToNextMatrix() }
   }
 
-  @Composable
-  fun EnabledDot(modifier: Modifier) {
-    Canvas(modifier = modifier, onDraw = { drawCircle(primaryColor) })
-  }
-
-  @Composable
-  fun DisabledDot(modifier: Modifier) {
-    Canvas(modifier = modifier, onDraw = { drawCircle(secondaryColor) })
-  }
-
-  BoxWithConstraints(modifier) {
-    val currentMatrix = currentDotsMatrix.collectAsState().value
-    Column(verticalArrangement = Arrangement.spacedBy(this@BoxWithConstraints.maxWidth.div(8))) {
-      for (y in 0..2) {
-        Row(horizontalArrangement = Arrangement.spacedBy(this@BoxWithConstraints.maxWidth.div(8))) {
-          for (x in 0..2) {
-            if (currentMatrix[y][x]) {
-              EnabledDot(Modifier.size(this@BoxWithConstraints.maxWidth.div(4)))
-            } else {
-              DisabledDot(Modifier.size(this@BoxWithConstraints.maxWidth.div(4)))
-            }
-          }
-        }
+  val currentMatrix = currentDotsMatrix.collectAsState().value
+  Canvas(modifier = modifier) {
+    val side = size.minDimension
+    val left = (size.width - side) / 2
+    val top = (size.height - side) / 2
+    val xPositions = floatArrayOf(0.296875f, 0.50006944f, 0.703125f)
+    val yPositions = floatArrayOf(0.29680556f, 0.5f, 0.70305556f)
+    for (y in 0..2) {
+      for (x in 0..2) {
+        drawCircle(
+            color = if (currentMatrix[y][x]) primaryColor else secondaryColor,
+            radius = side * 0.05370833f,
+            center = Offset(left + side * xPositions[x], top + side * yPositions[y]),
+            style = Stroke(width = side * 0.028f),
+        )
       }
     }
   }

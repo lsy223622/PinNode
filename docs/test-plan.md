@@ -5,7 +5,7 @@
 - Android 真机：至少一部支持蜂窝和 Wi-Fi 并行的 Android 设备。
 - Wi-Fi：能连接家庭 LAN，但可关闭其 WAN；记录网关 IPv4、接口名和路由表。
 - 蜂窝：可单独访问 Tailscale control/DERP，记录网络类型和 IPv4/IPv6 条件。
-- Tailscale：准备隔离测试 tailnet、`tag:rescue-gateway`、精确
+- Tailscale：准备隔离测试 tailnet、`tag:pinnode-test`、精确
   `autoApprovers`/最小 ACL(grant)、devices:routes API 凭据，以及一个可作为 Exit
   Node 的测试节点。
 - 观测：Android logcat、Tailscale debug/status、路由器访问日志、控制面设备/路由

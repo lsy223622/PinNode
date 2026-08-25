@@ -6,10 +6,10 @@
 
 | 范围 | 结果 |
 | --- | --- |
-| 服务端 | Go 1.26.6 下普通/Debug `go test`、`go vet` 均 PASS；MinGW64 CGO 下 `go test -race ./...`：PASS（含 SQLite 恢复、设备唯一绑定、可信代理、限流、心跳和清理重试） |
-| 管理页面 | 内嵌 JavaScript `node --check`：PASS；四个模板和退出策略标签通过 HTTP 页面检查 |
+| 服务端 | Go 1.26.6 下普通/Debug `go test -count=1 ./...`、`go vet` 均 PASS；实例根密钥并发创建与 OAuth token 缓存测试重复 50 次 PASS。最终 Windows `-race` 重跑在测试执行前被本机 MinGW64 `collect2` 静默链接失败阻断；此前基础版本曾通过，不能据此宣称本次新增代码已由 race detector 验证 |
+| 管理页面 | 内嵌 JavaScript 语法检查：PASS；本地真实浏览器渲染首次注册页和登录后管理面板，OAuth/API 类型切换、DOM、深色布局和控制台错误检查：PASS；CSP 使用逐响应 nonce 且没有 `unsafe-inline` |
 | Android | `ktfmtCheck`、`assembleDebug --no-daemon`：PASS；APK 为 `android/build/outputs/apk/debug/android-debug.apk`，minSdk 33、targetSdk 36、含四个 ABI |
-| 安装 | 最新 Debug APK 已通过有线 ADB 覆盖安装；最新 Debug 服务端以实际 SQLite 数据库启动，并经 HTTPS 反向代理完成供应、绑定、心跳和超时清理闭环 |
+| 安装 | 最新 Debug APK 已通过有线 ADB 覆盖安装；此前 OAuth 版本服务端曾经 HTTPS 反向代理完成供应、绑定、心跳和超时清理闭环。当前命名 OAuth/API 凭据版本已使用现有真实 OAuth client 完成 `client_credentials` 交换、必要 scope 校验、`auth_keys` 权限探测和加密入库；尚未重跑手机供应、绑定与清理全链路 |
 | Android JUnit | PASS：同一源码在纯 ASCII 临时路径执行 `testDebugUnitTest` 通过；原中文绝对路径仍会令 Gradle test worker 错误地产生 3 个 `ClassNotFoundException` |
 | Android lint | `lintDebug` 可完整执行，但因项目设置 `warningsAsErrors`，现有 390 项上游/兼容代码告警会使任务失败；未创建 baseline 或关闭质量门 |
 | Tailscale core/AAR | Go 1.26.6 下 `wgengine/netstack`：PASS；重新生成的 AAR 含四 ABI，最终 APK arm64 `libgojni.so` 的二进制漏洞扫描为 0 个可达漏洞 |
@@ -72,10 +72,13 @@ Tailscale ping 只能经 DERP，移动数据关闭即无法通信。这个对照
   仍可由管理 API 查询。
 - `govulncheck` 对服务端源码未发现漏洞；对最终 APK 的 arm64 Go 原生库未发现可达漏洞
   （依赖模块中有 4 个未被本二进制调用的已知漏洞）。
-- OAuth secret 只存在于被忽略的 `server/.env`；auth key、会话 token 和管理员 token
-  未写入源码、APK UI 或测试记录。
+- 管理员密码使用 Argon2id；首次启动原子生成实例根密钥，HKDF 派生独立的 PIN HMAC 和
+  AES-256-GCM 子密钥。OAuth client secret/API token 的页面列表与接口不回显明文；
+  auth key、会话 token、管理员 Cookie 和 CSRF token 未写入源码、APK UI 或测试记录。
 - provisioning hostname 绑定、一次性 auth key、精确设备 routes/删除 API 和心跳租约
-  已随最新服务端完成真实 tailnet 闭环。Debug 两端日志只记录阶段、耗时、状态和脱敏路由，
+  已在此前 OAuth 版本完成真实 tailnet 闭环；当前凭据选择和加密版本通过模拟 API 测试，
+  并使用现有真实 OAuth client 验证了在线交换、scope、权限探测和加密保存。
+  Debug 两端日志只记录阶段、耗时、状态和脱敏路由，
   不记录 PIN、请求体、Authorization、auth key、会话令牌或完整会话 ID。
 
 ## 仍不能宣称
@@ -88,3 +91,5 @@ Tailscale ping 只能经 DERP，移动数据关闭即无法通信。这个对照
   直连映射过期后，公网请求会在到达应用前超时；本机主动 Tailscale ping 代理节点后
   可暂时恢复。该部署基础设施问题在修复前不能宣称公网服务可持续可用。
 - PinNode 复用官方数据面，但受管 UI 不等于官方客户端全部界面/本地设置能力。
+- 当前新管理登录与命名 OAuth/API 凭据流程尚未使用当前版本重跑手机供应、绑定和清理；
+  本轮真实验证止于 OAuth 在线交换、scope/权限探测、加密入库和本地浏览器登录页。

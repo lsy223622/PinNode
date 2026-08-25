@@ -1,7 +1,8 @@
 # PinNode Provisioning Server
 
 该模块负责一次性 PIN、受限 Tailscale auth key、受管配置、会话令牌、精确路由启用
-和设备清理。OAuth client secret 只允许出现在服务端环境变量中。
+和设备清理。管理员账号、登录会话和命名后的 Tailscale OAuth client/API access token
+保存在 SQLite；credential 使用独立的 AES-256-GCM 子密钥加密，不会回显到浏览器。
 
 ## 本地启动
 
@@ -15,6 +16,12 @@ go run .
 
 服务端只读取进程环境，不会自行解析 `.env`；直接执行 `go run .` 前必须先导入这些变量。
 现有系统环境的值应优先于本地文件，生产部署不要依赖仓库目录中的 `.env`。
+首次启动会在 `PINNODE_SECRET_PATH`（默认 `data/pinnode.secret`）创建 32 字节实例根密钥，
+后续启动复用同一文件。服务端用 HKDF-SHA-256 从它分别派生凭据加密和 PIN HMAC 子密钥。
+容器或正式密钥管理系统可改用 base64 编码的 `PINNODE_INSTANCE_KEY`，此时不会创建文件。
+根密钥丢失或更换会使数据库中已有的 Tailscale 凭据无法解密；必须与 SQLite 分开备份。
+旧部署的 `PINNODE_CREDENTIAL_KEY` 和 `PINNODE_CODE_PEPPER` 仍作为对应子密钥覆盖项读取，
+两项均存在时不会额外创建实例密钥文件。
 
 正式构建默认监听 `:6633`；Debug 构建使用 `go run -tags debug .` 启动，默认监听
 `:6634`，因此两者可以同时运行。设置 `PINNODE_LISTEN_ADDR` 可覆盖任一默认值。
@@ -35,9 +42,21 @@ Debug 构建输出脱敏访问日志，包括方法、规范化路由、连接�
 
 ## 管理页面与快速模板
 
-打开 `/` 或 `/admin`，输入 `PINNODE_ADMIN_TOKEN` 后调用
-`POST /v1/pairing-codes`。令牌只放在 Bearer header 中，不写入 URL 或
-localStorage。页面提供：
+首次打开 `/` 或 `/admin` 时在登录页创建唯一管理员账号。默认仅允许从服务端本机完成
+首次注册；确需从远端初始化时必须显式设置 `PINNODE_ALLOW_REMOTE_SETUP=true`，并通过
+HTTPS 访问。密码至少 15 个字符，使用 Argon2id 加盐哈希；登录还执行本地 PoW、来源与
+账号限速、递增退避。登录成功后使用 HttpOnly、SameSite=Strict 会话 Cookie 和 CSRF
+token 保护管理接口。
+
+管理员可以添加并命名 Tailscale OAuth client 或以 `tskey-api-` 开头的 API access token。
+OAuth client 是长期运行的推荐方式：需要 `auth_keys`、`devices:core`、`devices:routes`
+scope；Debug 构建授权 `tag:pinnode-test`，正式构建授权 `tag:pinnode`。服务端用
+client ID/secret 换取约一小时的短期 access
+token，在到期前自动重新获取；client secret 和普通 API token 都只以密文保存。普通 API
+token 最长 90 天，适合快速配置。以后登录只需从列表选择，不再输入凭据。生成一次性 PIN 时，
+所选凭据 ID 会与 PIN 和会话一起持久化，以便后续设备绑定、路由撤销和清理使用同一凭据。
+升级旧数据库时，保存的第一个凭据会原子回填到尚无凭据 ID 的既有 PIN 和会话。
+页面提供：
 
 - 救援连接：`networkMode=cellular`，自动发布当前 Wi-Fi 网关 `/32`；
 - 子网路由：`networkMode=default`，自动发布当前 Wi-Fi IPv4 子网；
@@ -78,5 +97,9 @@ App Connector 和 Netfilter 等偏好。
 
 SQLite 面向单个 PinNode 服务实例。多实例部署需要改用共享事务数据库，并把应用层
 限流迁移到共享存储或由可信反向代理统一执行。数据库会保留全部会话历史，不自动删除。
+Tailscale API access token 最长 90 天并可提前撤销；长期服务应使用可撤销、按 scope 和
+tag 限制的 OAuth client。数据库备份和 `pinnode.secret`/`PINNODE_INSTANCE_KEY` 应分开
+保护，任何一方单独泄露都不应足以还原凭据。POSIX 首次创建使用 `0600`；Windows 部署
+还应确保服务账号对密钥目录拥有独占 ACL。
 
 接口和安全边界见 `../docs/architecture.md` 与 `../docs/threat-model.md`。

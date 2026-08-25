@@ -12,6 +12,7 @@ Thumbs.db
 !.env.example
 *.jks
 *.keystore
+*.secret
 tailscale.jks
 
 # Build caches. These are disposable and must never be part of the source tree
