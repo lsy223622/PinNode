@@ -467,6 +467,11 @@
       }
     }
 
+    function formatLocalDateTime(value) {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    }
+
     async function showApp(state) {
       csrfToken = state.csrfToken;
       $("account-name").textContent = state.username;
@@ -756,7 +761,7 @@
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || ("HTTP " + response.status));
-        showResult("success", "授权码\n" + payload.code + "\n\n有效期至：" + payload.expiresAt + "\n请把六位数字交给手机使用者；该 code 只能兑换一次。");
+        showResult("success", "授权码\n" + payload.code + "\n\n有效期至（本地时间）：" + formatLocalDateTime(payload.expiresAt) + "\n请把六位数字交给手机使用者；该 code 只能兑换一次。");
       } catch (error) {
         showResult("error", "生成失败：" + error.message);
       } finally {
