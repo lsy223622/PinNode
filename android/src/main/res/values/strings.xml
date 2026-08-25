@@ -382,11 +382,11 @@
 
     <!-- Strings for the PinNode rescue screen -->
     <string name="rescue_node_title">PinNode</string>
-    <string name="rescue_node_explanation">Use a one-time authorization code to start a temporary node. It stays signed in unless its server policy logs it out.</string>
+    <string name="rescue_node_explanation">Use a one-time authorization code to start a temporary node.</string>
     <string name="rescue_node_server">Configuration server</string>
     <string name="rescue_node_server_url">Config API URL</string>
     <string name="rescue_node_server_url_hint">For example, https://example.invalid</string>
-    <string name="rescue_node_pin">Six-digit PIN</string>
+    <string name="rescue_node_pin">Six-digit authorization code</string>
     <string name="rescue_node_start">Start temporary session</string>
     <string name="rescue_node_confirm">Confirm and start temporary node</string>
     <string name="rescue_node_stop">Stop temporary session</string>

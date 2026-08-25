@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="rescue_node_title">PinNode</string>
-    <string name="rescue_node_explanation">使用一次性授权码启动临时节点；默认保持登录，退出行为由下发策略控制。</string>
+    <string name="rescue_node_explanation">使用一次性授权码启动临时节点。</string>
     <string name="rescue_node_server">配置服务器</string>
     <string name="rescue_node_server_url">配置下发 API 地址</string>
     <string name="rescue_node_server_url_hint">例如 https://example.invalid</string>
-    <string name="rescue_node_pin">六位 PIN</string>
+    <string name="rescue_node_pin">六位授权码</string>
     <string name="rescue_node_start">开始临时会话</string>
     <string name="rescue_node_confirm">确认并启动临时节点</string>
     <string name="rescue_node_stop">停止临时会话</string>
