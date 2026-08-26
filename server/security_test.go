@@ -28,8 +28,8 @@ func TestPairingCodeIsSixDigits(t *testing.T) {
 	}
 }
 
-func TestDefaultRescueConfigIsGatewayOnly(t *testing.T) {
-	config, err := DefaultRescueConfig().Normalize()
+func TestDefaultSessionConfigIsGatewayOnly(t *testing.T) {
+	config, err := DefaultSessionConfig().Normalize()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +39,8 @@ func TestDefaultRescueConfigIsGatewayOnly(t *testing.T) {
 	}
 }
 
-func TestRescueConfigRejectsUnapprovedDefaultRoute(t *testing.T) {
-	config := DefaultRescueConfig()
+func TestSessionConfigRejectsUnapprovedDefaultRoute(t *testing.T) {
+	config := DefaultSessionConfig()
 	config.AdvertiseRoutes = []string{"0.0.0.0/0"}
 	if _, err := config.Normalize(); err == nil {
 		t.Fatal("未开启 advertiseExitNode 时接受了默认路由")
@@ -48,7 +48,7 @@ func TestRescueConfigRejectsUnapprovedDefaultRoute(t *testing.T) {
 }
 
 func TestExitNodeRoutesStayOnCellularBindingSide(t *testing.T) {
-	config := DefaultRescueConfig()
+	config := DefaultSessionConfig()
 	config.AdvertiseExitNode = true
 	config.SubnetRouter = true
 	config, err := config.Normalize()
@@ -65,7 +65,7 @@ func TestExitNodeRoutesStayOnCellularBindingSide(t *testing.T) {
 }
 
 func TestWiFiSubnetTemplatePublishesDetectedSubnet(t *testing.T) {
-	config := RescueConfig{
+	config := SessionConfig{
 		NetworkMode:         NetworkModeDefault,
 		VPNEnabled:          true,
 		SubnetRouter:        true,
@@ -84,7 +84,7 @@ func TestWiFiSubnetTemplatePublishesDetectedSubnet(t *testing.T) {
 func TestLogoutAtUsesEarliestConfiguredPolicy(t *testing.T) {
 	createdAt := time.Date(2026, 8, 24, 1, 0, 0, 0, time.UTC)
 	loginAt := createdAt.Add(10 * time.Minute)
-	config := RescueConfig{ExitPolicy: ExitPolicy{AfterConfigSeconds: 3600, AfterLoginSeconds: 60}}
+	config := SessionConfig{ExitPolicy: ExitPolicy{AfterConfigSeconds: 3600, AfterLoginSeconds: 60}}
 	if got, want := config.LogoutAt(createdAt, loginAt), loginAt.Add(time.Minute); !got.Equal(want) {
 		t.Fatalf("退出时间=%v，期望最早策略时间 %v", got, want)
 	}

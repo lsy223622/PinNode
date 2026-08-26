@@ -26,7 +26,7 @@ type Config struct {
 	CodeTTL           time.Duration
 	DatabasePath      string
 	ProvisioningTTL   time.Duration
-	HeartbeatTTL      time.Duration
+	SyncLeaseTTL      time.Duration
 	AdminSessionTTL   time.Duration
 	PoWDifficulty     int
 	AllowRemoteSetup  bool
@@ -43,7 +43,7 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	heartbeatTTL, err := getenvDuration("PINNODE_HEARTBEAT_TTL", 5*time.Minute)
+	syncLeaseTTL, err := getenvDuration("PINNODE_SYNC_LEASE_TTL", 5*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
@@ -76,7 +76,7 @@ func LoadConfig() (Config, error) {
 		CodeTTL:           codeTTL,
 		DatabasePath:      databasePath,
 		ProvisioningTTL:   provisioningTTL,
-		HeartbeatTTL:      heartbeatTTL,
+		SyncLeaseTTL:      syncLeaseTTL,
 		AdminSessionTTL:   adminSessionTTL,
 		PoWDifficulty:     powDifficulty,
 		AllowRemoteSetup:  allowRemoteSetup,
@@ -88,8 +88,8 @@ func LoadConfig() (Config, error) {
 	if c.ProvisioningTTL < time.Minute {
 		return Config{}, fmt.Errorf("PINNODE_PROVISIONING_TTL 不能小于 1 分钟")
 	}
-	if c.HeartbeatTTL < 2*time.Minute {
-		return Config{}, fmt.Errorf("PINNODE_HEARTBEAT_TTL 不能小于 2 分钟")
+	if c.SyncLeaseTTL < 2*time.Minute {
+		return Config{}, fmt.Errorf("PINNODE_SYNC_LEASE_TTL 不能小于 2 分钟")
 	}
 	if c.AdminSessionTTL < 15*time.Minute || c.AdminSessionTTL > 7*24*time.Hour {
 		return Config{}, fmt.Errorf("PINNODE_ADMIN_SESSION_TTL 必须在 15 分钟到 7 天之间")

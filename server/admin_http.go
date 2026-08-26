@@ -29,13 +29,13 @@ type adminAuthRequest struct {
 
 func (s *Service) handleAdminAuthState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	exists, err := s.store.AdminExists()
 	if err != nil {
 		s.logger.Printf("读取管理员初始化状态失败: %v", err)
-		writeError(w, http.StatusInternalServerError, "读取登录状态失败")
+		writeError(w, http.StatusInternalServerError, "auth_state_failed", "读取登录状态失败")
 		return
 	}
 	response := map[string]any{
@@ -45,7 +45,7 @@ func (s *Service) handleAdminAuthState(w http.ResponseWriter, r *http.Request) {
 	}
 	if session, ok, err := s.adminSession(r); err != nil {
 		s.logger.Printf("读取管理员会话失败: %v", err)
-		writeError(w, http.StatusInternalServerError, "读取登录状态失败")
+		writeError(w, http.StatusInternalServerError, "auth_state_failed", "读取登录状态失败")
 		return
 	} else if ok {
 		response["authenticated"] = true
@@ -58,7 +58,7 @@ func (s *Service) handleAdminAuthState(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handlePoWChallenge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	client := clientAddress(r, s.config.TrustedProxyCIDRs)
@@ -68,7 +68,7 @@ func (s *Service) handlePoWChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	challenge, err := s.pow.Issue(client, s.config.PoWDifficulty, time.Now())
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "安全验证暂时繁忙")
+		writeError(w, http.StatusServiceUnavailable, "pow_unavailable", "安全验证暂时繁忙")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -81,7 +81,7 @@ func (s *Service) handlePoWChallenge(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	if !s.requireSafeAuthRequest(w, r) {
@@ -97,46 +97,46 @@ func (s *Service) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.pow.Verify(request.PoWID, client, request.PoWNonce, time.Now()) {
-		writeError(w, http.StatusBadRequest, "安全验证已失效，请重试")
+		writeError(w, http.StatusBadRequest, "pow_invalid", "安全验证已失效，请重试")
 		return
 	}
 	if !s.config.AllowRemoteSetup && !isLoopbackClient(r, s.config.TrustedProxyCIDRs) {
-		writeError(w, http.StatusForbidden, "首次管理员注册默认只允许从服务端本机完成")
+		writeError(w, http.StatusForbidden, "admin_setup_forbidden", "首次管理员注册默认只允许从服务端本机完成")
 		return
 	}
 	username, err := normalizeAdminUsername(request.Username)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "admin_username_invalid", err.Error())
 		return
 	}
 	if err := validateAdminPassword(request.Password); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "admin_password_invalid", err.Error())
 		return
 	}
 	passwordHash, err := hashPassword(request.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "创建管理员账号失败")
+		writeError(w, http.StatusInternalServerError, "admin_setup_failed", "创建管理员账号失败")
 		return
 	}
 	created, err := s.store.CreateAdmin(username, passwordHash, time.Now())
 	if err != nil {
 		s.logger.Printf("创建管理员账号失败: %v", err)
-		writeError(w, http.StatusInternalServerError, "创建管理员账号失败")
+		writeError(w, http.StatusInternalServerError, "admin_setup_failed", "创建管理员账号失败")
 		return
 	}
 	if !created {
-		writeError(w, http.StatusConflict, "管理员账号已经完成初始化")
+		writeError(w, http.StatusConflict, "admin_already_initialized", "管理员账号已经完成初始化")
 		return
 	}
 	admin, ok, err := s.store.GetAdminByUsername(username)
 	if err != nil || !ok {
-		writeError(w, http.StatusInternalServerError, "创建管理员会话失败")
+		writeError(w, http.StatusInternalServerError, "admin_session_create_failed", "创建管理员会话失败")
 		return
 	}
 	session, err := s.issueAdminSession(w, r, admin)
 	if err != nil {
 		s.logger.Printf("创建管理员会话失败: %v", err)
-		writeError(w, http.StatusInternalServerError, "创建管理员会话失败")
+		writeError(w, http.StatusInternalServerError, "admin_session_create_failed", "创建管理员会话失败")
 		return
 	}
 	writeJSON(w, http.StatusCreated, adminSessionResponse(session))
@@ -144,7 +144,7 @@ func (s *Service) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	if !s.requireSafeAuthRequest(w, r) {
@@ -160,7 +160,7 @@ func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.pow.Verify(request.PoWID, client, request.PoWNonce, time.Now()) {
-		writeError(w, http.StatusBadRequest, "安全验证已失效，请重试")
+		writeError(w, http.StatusBadRequest, "pow_invalid", "安全验证已失效，请重试")
 		return
 	}
 	username, usernameErr := normalizeAdminUsername(request.Username)
@@ -170,7 +170,7 @@ func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	admin, ok, err := s.store.GetAdminByUsername(username)
 	if err != nil {
 		s.logger.Printf("读取管理员账号失败: %v", err)
-		writeError(w, http.StatusInternalServerError, "登录失败")
+		writeError(w, http.StatusInternalServerError, "admin_login_failed", "登录失败")
 		return
 	}
 	passwordHash := s.dummyHash
@@ -182,7 +182,7 @@ func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if ok && !admin.LockedUntil.IsZero() && admin.LockedUntil.After(now) {
 		retryAfter := int64((admin.LockedUntil.Sub(now) + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
-		writeError(w, http.StatusTooManyRequests, "登录暂时受限，请稍后重试")
+		writeError(w, http.StatusTooManyRequests, "admin_login_limited", "登录暂时受限，请稍后重试")
 		return
 	}
 	if usernameErr != nil || !ok || !passwordMatches {
@@ -191,18 +191,18 @@ func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 				s.logger.Printf("记录管理员登录失败状态: %v", failureErr)
 			}
 		}
-		writeError(w, http.StatusUnauthorized, "用户名或密码错误")
+		writeError(w, http.StatusUnauthorized, "admin_credentials_invalid", "用户名或密码错误")
 		return
 	}
 	if err := s.store.ResetAdminLoginFailures(admin.ID, now); err != nil {
 		s.logger.Printf("重置管理员登录失败状态: %v", err)
-		writeError(w, http.StatusInternalServerError, "登录失败")
+		writeError(w, http.StatusInternalServerError, "admin_login_failed", "登录失败")
 		return
 	}
 	session, err := s.issueAdminSession(w, r, admin)
 	if err != nil {
 		s.logger.Printf("创建管理员会话失败: %v", err)
-		writeError(w, http.StatusInternalServerError, "登录失败")
+		writeError(w, http.StatusInternalServerError, "admin_login_failed", "登录失败")
 		return
 	}
 	writeJSON(w, http.StatusOK, adminSessionResponse(session))
@@ -210,11 +210,11 @@ func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	if !sameOriginRequest(r, s.config.TrustedProxyCIDRs) {
-		writeError(w, http.StatusForbidden, "请求来源无效")
+		writeError(w, http.StatusForbidden, "origin_invalid", "请求来源无效")
 		return
 	}
 	session, ok := s.requireAdminSession(w, r)
@@ -222,7 +222,7 @@ func (s *Service) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(session.CSRFToken)) != 1 {
-		writeError(w, http.StatusForbidden, "CSRF 验证失败")
+		writeError(w, http.StatusForbidden, "csrf_invalid", "CSRF 验证失败")
 		return
 	}
 	if tokenHash, ok := adminSessionHash(r); ok {
@@ -242,7 +242,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		credentials, err := s.store.ListTailscaleCredentials()
 		if err != nil {
 			s.logger.Printf("读取 Tailscale 凭据列表失败: %v", err)
-			writeError(w, http.StatusInternalServerError, "读取凭据列表失败")
+			writeError(w, http.StatusInternalServerError, "credential_list_failed", "读取凭据列表失败")
 			return
 		}
 		items := make([]map[string]any, 0, len(credentials))
@@ -252,7 +252,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusOK, map[string]any{"credentials": items})
 	case http.MethodPost:
 		if !secureAuthTransport(r, s.config.TrustedProxyCIDRs) {
-			writeError(w, http.StatusUpgradeRequired, "保存 Tailscale 凭据需要 HTTPS；仅服务端本机可使用 HTTP")
+			writeError(w, http.StatusUpgradeRequired, "secure_transport_required", "保存 Tailscale 凭据需要 HTTPS；仅服务端本机可使用 HTTP")
 			return
 		}
 		var request struct {
@@ -267,7 +267,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		}
 		name := strings.TrimSpace(request.Name)
 		if name == "" || utf8.RuneCountInString(name) > 64 || len(name) > 256 || strings.ContainsAny(name, "\r\n\x00") {
-			writeError(w, http.StatusBadRequest, "令牌名称必须为 1 到 64 个字符")
+			writeError(w, http.StatusBadRequest, "credential_name_invalid", "令牌名称必须为 1 到 64 个字符")
 			return
 		}
 		kind := TailscaleCredentialKind(strings.TrimSpace(request.Type))
@@ -280,12 +280,13 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		case TailscaleCredentialAPIToken:
 			token := strings.TrimSpace(request.Token)
 			if !strings.HasPrefix(token, "tskey-api-") || len(token) > 512 {
-				writeError(w, http.StatusBadRequest, "请输入以 tskey-api- 开头的 Tailscale API access token")
+				writeError(w, http.StatusBadRequest, "api_token_invalid", "请输入以 tskey-api- 开头的 Tailscale API access token")
 				return
 			}
 			if err := s.tailscale.ValidateCredential(r.Context(), token); err != nil {
 				s.logger.Printf("验证 Tailscale API token 失败: %v", err)
-				writeError(w, http.StatusBadRequest, "Tailscale API token 验证失败，请检查权限、有效期和 tailnet")
+				code, message := tailscaleFailure(err, "Tailscale API token 验证失败，请检查有效期和 tailnet")
+				writeError(w, http.StatusBadRequest, code, message)
 				return
 			}
 			plaintext = token
@@ -294,44 +295,46 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 			clientSecret := strings.TrimSpace(request.ClientSecret)
 			if clientID == "" || len(clientID) > 512 || strings.ContainsAny(clientID, "\r\n\x00") ||
 				clientSecret == "" || len(clientSecret) > 2048 || strings.ContainsAny(clientSecret, "\r\n\x00") {
-				writeError(w, http.StatusBadRequest, "请输入有效的 OAuth client ID 和 client secret")
+				writeError(w, http.StatusBadRequest, "oauth_client_invalid", "请输入有效的 OAuth client ID 和 client secret")
 				return
 			}
 			var err error
 			oauthToken, err = s.tailscale.ExchangeOAuthToken(r.Context(), clientID, clientSecret)
 			if err != nil {
 				s.logger.Printf("交换 Tailscale OAuth token 失败: %v", err)
-				writeError(w, http.StatusBadRequest, "Tailscale OAuth client 验证失败，请检查 ID、secret 和权限")
+				code, message := tailscaleFailure(err, "Tailscale OAuth client 验证失败，请检查 ID、secret 和权限")
+				writeError(w, http.StatusBadRequest, code, message)
 				return
 			}
 			if err := validateOAuthScopes(oauthToken.Scopes); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
+				writeError(w, http.StatusBadRequest, "oauth_scope_invalid", err.Error())
 				return
 			}
 			if err := s.tailscale.ValidateCredential(r.Context(), oauthToken.Token); err != nil {
 				s.logger.Printf("验证 Tailscale OAuth 权限失败: %v", err)
-				writeError(w, http.StatusBadRequest, "OAuth client 缺少 auth_keys 权限或 tailnet 不匹配")
+				code, message := tailscaleFailure(err, "OAuth client 缺少 auth_keys 权限或 tailnet 不匹配")
+				writeError(w, http.StatusBadRequest, code, message)
 				return
 			}
 			encoded, err := json.Marshal(oauthClientSecret{ClientID: clientID, ClientSecret: clientSecret})
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "保存 OAuth client 失败")
+				writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存 OAuth client 失败")
 				return
 			}
 			plaintext = string(encoded)
 		default:
-			writeError(w, http.StatusBadRequest, "不支持的 Tailscale 凭据类型")
+			writeError(w, http.StatusBadRequest, "credential_type_unsupported", "不支持的 Tailscale 凭据类型")
 			return
 		}
 		id, err := newURLToken(16)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "保存凭据失败")
+			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
 		}
 		ciphertext, err := s.cipher.Seal(id, plaintext)
 		if err != nil {
 			s.logger.Printf("加密 Tailscale 凭据失败: %v", err)
-			writeError(w, http.StatusInternalServerError, "保存凭据失败")
+			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
 		}
 		now := time.Now()
@@ -340,11 +343,11 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		}
 		if err := s.store.PutTailscaleCredential(credential); err != nil {
 			if isUniqueConstraintError(err) {
-				writeError(w, http.StatusConflict, "令牌名称已经存在")
+				writeError(w, http.StatusConflict, "credential_name_conflict", "令牌名称已经存在")
 				return
 			}
 			s.logger.Printf("保存 Tailscale 凭据失败: %v", err)
-			writeError(w, http.StatusInternalServerError, "保存凭据失败")
+			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
 		}
 		if kind == TailscaleCredentialOAuthClient {
@@ -352,7 +355,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		}
 		writeJSON(w, http.StatusCreated, publicTailscaleCredential(credential))
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 	}
 }
 
@@ -363,11 +366,11 @@ func (s *Service) requireAdminAPI(w http.ResponseWriter, r *http.Request, requir
 	}
 	if requireCSRF {
 		if !sameOriginRequest(r, s.config.TrustedProxyCIDRs) {
-			writeError(w, http.StatusForbidden, "请求来源无效")
+			writeError(w, http.StatusForbidden, "origin_invalid", "请求来源无效")
 			return false
 		}
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(session.CSRFToken)) != 1 {
-			writeError(w, http.StatusForbidden, "CSRF 验证失败")
+			writeError(w, http.StatusForbidden, "csrf_invalid", "CSRF 验证失败")
 			return false
 		}
 	}
@@ -378,11 +381,11 @@ func (s *Service) requireAdminSession(w http.ResponseWriter, r *http.Request) (A
 	session, ok, err := s.adminSession(r)
 	if err != nil {
 		s.logger.Printf("读取管理员会话失败: %v", err)
-		writeError(w, http.StatusInternalServerError, "管理员认证失败")
+		writeError(w, http.StatusInternalServerError, "admin_auth_failed", "管理员认证失败")
 		return AdminSession{}, false
 	}
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "需要管理员登录")
+		writeError(w, http.StatusUnauthorized, "admin_auth_required", "需要管理员登录")
 		return AdminSession{}, false
 	}
 	return session, true
@@ -511,7 +514,7 @@ func (s *Service) cacheOAuthToken(id string, token OAuthAccessToken) {
 
 func validateOAuthScopes(scopes []string) error {
 	if len(scopes) == 0 {
-		return nil
+		return fmt.Errorf("Tailscale OAuth token 未返回权限范围")
 	}
 	available := make(map[string]bool, len(scopes))
 	for _, scope := range scopes {
@@ -538,11 +541,11 @@ func validateOAuthScopes(scopes []string) error {
 
 func (s *Service) requireSafeAuthRequest(w http.ResponseWriter, r *http.Request) bool {
 	if !sameOriginRequest(r, s.config.TrustedProxyCIDRs) {
-		writeError(w, http.StatusForbidden, "请求来源无效")
+		writeError(w, http.StatusForbidden, "origin_invalid", "请求来源无效")
 		return false
 	}
 	if !secureAuthTransport(r, s.config.TrustedProxyCIDRs) {
-		writeError(w, http.StatusUpgradeRequired, "管理登录需要 HTTPS；仅服务端本机可使用 HTTP")
+		writeError(w, http.StatusUpgradeRequired, "secure_transport_required", "管理登录需要 HTTPS；仅服务端本机可使用 HTTP")
 		return false
 	}
 	return true

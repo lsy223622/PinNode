@@ -383,8 +383,6 @@
           <label class="setting-row danger"><span class="setting-copy"><span class="setting-title">允许远程配置</span><span class="setting-description">允许 tailnet 管理员远程修改本节点的全部偏好（高风险）。</span></span><input id="remote-config" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
           <label class="field-row" for="netfilter-mode"><span class="field-label">Netfilter Mode</span><select id="netfilter-mode"><option value="">使用客户端默认值</option><option value="on">on</option><option value="off">off</option><option value="nodivert">nodivert</option></select></label>
           <label class="setting-row"><span class="setting-copy"><span class="setting-title">App Connector</span><span class="setting-description">启用 App Connector 广告。</span></span><input id="app-connector" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
-          <label class="setting-row"><span class="setting-copy"><span class="setting-title">检查客户端更新</span><span class="setting-description">定期检查可用的客户端更新。</span></span><input id="auto-update-check" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
-          <label class="setting-row"><span class="setting-copy"><span class="setting-title">自动安装客户端更新</span><span class="setting-description">发现更新后自动安装。</span></span><input id="auto-update-apply" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
         </section>
 
         <section class="card" id="lifecycle">
@@ -486,7 +484,7 @@
       try {
         const response = await fetch("/v1/auth/state", { headers: { "Accept": "application/json" } });
         const state = await response.json();
-        if (!response.ok) throw new Error(state.error || "读取登录状态失败");
+        if (!response.ok) throw new Error(state.error?.message || "读取登录状态失败");
         if (state.authenticated) await showApp(state);
         else showAuth(state);
       } catch (error) {
@@ -542,7 +540,7 @@
       try {
         const challengeResponse = await fetch("/v1/auth/pow", { headers: { "Accept": "application/json" } });
         const challenge = await challengeResponse.json();
-        if (!challengeResponse.ok) throw new Error(challenge.error || "无法开始安全验证");
+        if (!challengeResponse.ok) throw new Error(challenge.error?.message || "无法开始安全验证");
         const powNonce = await solvePoW(challenge);
         authStatus("working", setupMode ? "正在创建管理员账号…" : "正在验证账号…");
         const response = await fetch(setupMode ? "/v1/auth/setup" : "/v1/auth/login", {
@@ -556,7 +554,7 @@
           })
         });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "登录失败");
+        if (!response.ok) throw new Error(payload.error?.message || "登录失败");
         $("login-password").value = "";
         await showApp(payload);
       } catch (error) {
@@ -573,7 +571,7 @@
         return;
       }
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "读取凭据列表失败");
+      if (!response.ok) throw new Error(payload.error?.message || "读取凭据列表失败");
       const select = $("credential-select");
       const previous = preferredID || select.value;
       select.replaceChildren();
@@ -640,7 +638,7 @@
           return;
         }
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "保存凭据失败");
+        if (!response.ok) throw new Error(payload.error?.message || "保存凭据失败");
         $("credential-token").value = "";
         $("credential-client-id").value = "";
         $("credential-client-secret").value = "";
@@ -739,8 +737,6 @@
           hostname: value("hostname"),
           netfilterMode: value("netfilter-mode"),
           appConnector: checked("app-connector"),
-          autoUpdateCheck: checked("auto-update-check"),
-          autoUpdateApply: checked("auto-update-apply"),
           exitPolicy: {
             onAppClose: checked("exit-on-app-close"),
             networkChange: value("network-exit"),
@@ -760,7 +756,7 @@
           body: JSON.stringify(body)
         });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || ("HTTP " + response.status));
+        if (!response.ok) throw new Error(payload.error?.message || ("HTTP " + response.status));
         showResult("success", "授权码\n" + payload.code + "\n\n有效期至（本地时间）：" + formatLocalDateTime(payload.expiresAt) + "\n请把六位数字交给手机使用者；该 code 只能兑换一次。");
       } catch (error) {
         showResult("error", "生成失败：" + error.message);

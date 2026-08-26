@@ -1,15 +1,15 @@
 # PinNode 测试结果
 
-更新时间：2026-08-25
+更新时间：2026-08-27
 
 ## 最终构建与静态验证
 
 | 范围 | 结果 |
 | --- | --- |
-| 服务端 | Go 1.26.6 下普通/Debug `go test -count=1 ./...`、`go vet` 均 PASS；实例根密钥并发创建与 OAuth token 缓存测试重复 50 次 PASS。最终 Windows `-race` 重跑在测试执行前被本机 MinGW64 `collect2` 静默链接失败阻断；此前基础版本曾通过，不能据此宣称本次新增代码已由 race detector 验证 |
+| 服务端 | 当前 clean API v1 的 `go test ./...` PASS，覆盖结构化错误、能力发现、幂等创建、上游失败不消费 PIN、revisioned sync、空路由数组和 OAuth scope/tag；本轮尚未重跑 Debug、vet 或 race detector |
 | 管理页面 | 内嵌 JavaScript 语法检查：PASS；本地真实浏览器渲染首次注册页和登录后管理面板，OAuth/API 类型切换、DOM、深色布局和控制台错误检查：PASS；CSP 使用逐响应 nonce 且没有 `unsafe-inline` |
-| Android | `ktfmtCheck`、`assembleDebug --no-daemon`：PASS；APK 为 `android/build/outputs/apk/debug/android-debug.apk`，minSdk 33、targetSdk 36、含四个 ABI |
-| 安装 | 最新 Debug APK 已通过有线 ADB 覆盖安装；此前 OAuth 版本服务端曾经 HTTPS 反向代理完成供应、绑定、心跳和超时清理闭环。当前命名 OAuth/API 凭据版本已使用现有真实 OAuth client 完成 `client_credentials` 交换、必要 scope 校验、`auth_keys` 权限探测和加密入库；尚未重跑手机供应、绑定与清理全链路 |
+| Android | 当前 clean API v1 的 `compileDebugKotlin --no-daemon`、`ktfmtCheck`、`testDebugUnitTest` 均 PASS；本轮未重跑 APK 装配 |
+| 安装 | 先前版本曾完成 HTTPS 供应、绑定和租约超时清理闭环；当前 revisioned sync、持久化幂等键和能力协商版本尚未重新安装或重跑真机全链路 |
 | Android JUnit | PASS：同一源码在纯 ASCII 临时路径执行 `testDebugUnitTest` 通过；原中文绝对路径仍会令 Gradle test worker 错误地产生 3 个 `ClassNotFoundException` |
 | Android lint | `lintDebug` 可完整执行，但因项目设置 `warningsAsErrors`，现有 390 项上游/兼容代码告警会使任务失败；未创建 baseline 或关闭质量门 |
 | Tailscale core/AAR | Go 1.26.6 下 `wgengine/netstack`：PASS；重新生成的 AAR 含四 ABI，最终 APK arm64 `libgojni.so` 的二进制漏洞扫描为 0 个可达漏洞 |
@@ -49,7 +49,7 @@ Tailscale ping 只能经 DERP，移动数据关闭即无法通信。这个对照
 | Wi-Fi 丢失即退出 | PASS（本地）：配置 `networkChange=wifi-lost`，关闭 Wi-Fi 后界面回到未启动；Wi-Fi 已恢复，远端待办删除未在本轮单独二次观测 |
 | 正常手动停止 | PASS：清空本地广告、logout，服务端撤销 enabled routes 并删除精确设备 |
 | 应用关闭策略 | PASS（含 OEM 限制）：最近任务强杀没有投递 Activity/Service 回调，VPN service 当场消失；最终实现禁止该会话在下次进程启动时恢复，并补做本地与远端清理；重开界面保持未启动，远端 peer 消失 |
-| 应用关闭心跳兜底 | PASS：`onAppClose` 会话约每 40 秒更新租约；ADB `force-stop` 后没有错误地立即清理，超过两分钟租约后 reaper 撤销路由、删除精确设备并把历史状态记为 `heartbeat_timeout`；重开应用不恢复旧会话 |
+| 应用关闭同步租约兜底 | NEEDS RETEST：先前租约机制已完成真机验证；当前 v1 改为所有活动会话统一 `/sync`，`onAppClose` 才续期，超时原因改为 `sync_timeout` |
 | 普通进程重建 | PASS：无 `onAppClose` 策略时会话、配置、路由和 VPN 恢复 |
 | 手机重启 | NOT TESTED：用户明确要求不重启，因为解锁前 ADB 不可用 |
 
@@ -68,14 +68,14 @@ Tailscale ping 只能经 DERP，移动数据关闭即无法通信。这个对照
   Android 加入后为非 ephemeral 持久节点。设备 attach 要求本次 provisioning hostname、
   创建时间和目标 tag 同时匹配，并以数据库唯一约束绑定 node ID。
 - SQLite 重启恢复、历史会话、唯一设备绑定、可信代理地址解析、限流窗口，以及仅
-  `onAppClose` 会话因心跳超时进入 reaper，均通过服务端测试；历史记录在服务端重启后
+  `onAppClose` 会话因同步超时进入 reaper，均通过服务端测试；历史记录在服务端重启后
   仍可由管理 API 查询。
 - `govulncheck` 对服务端源码未发现漏洞；对最终 APK 的 arm64 Go 原生库未发现可达漏洞
   （依赖模块中有 4 个未被本二进制调用的已知漏洞）。
 - 管理员密码使用 Argon2id；首次启动原子生成实例根密钥，HKDF 派生独立的 PIN HMAC 和
   AES-256-GCM 子密钥。OAuth client secret/API token 的页面列表与接口不回显明文；
   auth key、会话 token、管理员 Cookie 和 CSRF token 未写入源码、APK UI 或测试记录。
-- provisioning hostname 绑定、一次性 auth key、精确设备 routes/删除 API 和心跳租约
+- provisioning hostname 绑定、一次性 auth key、精确设备 routes/删除 API 和同步租约
   已在此前 OAuth 版本完成真实 tailnet 闭环；当前凭据选择和加密版本通过模拟 API 测试，
   并使用现有真实 OAuth client 验证了在线交换、scope、权限探测和加密保存。
   Debug 两端日志只记录阶段、耗时、状态和脱敏路由，

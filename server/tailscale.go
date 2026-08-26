@@ -78,6 +78,8 @@ func (c *TailscaleClient) ExchangeOAuthToken(ctx context.Context, clientID, clie
 		"grant_type":    {"client_credentials"},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
+		"scope":         {"auth_keys devices:core devices:routes"},
+		"tags":          {managedDeviceTag},
 	}
 	req, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, c.apiURL("oauth", "token"), strings.NewReader(form.Encode()),
@@ -158,6 +160,9 @@ func (c *TailscaleClient) GetDevice(ctx context.Context, accessToken, deviceID s
 }
 
 func (c *TailscaleClient) SetDeviceRoutes(ctx context.Context, accessToken, deviceID string, routes []string) error {
+	if routes == nil {
+		routes = []string{}
+	}
 	payload := map[string][]string{"routes": routes}
 	return c.doJSON(ctx, accessToken, http.MethodPost, c.apiURL("device", deviceID, "routes"), payload, nil)
 }

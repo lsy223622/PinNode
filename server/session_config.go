@@ -27,11 +27,11 @@ type ExitPolicy struct {
 	At                 string `json:"at"`
 }
 
-// RescueConfig 是一次服务端受管会话的客户端偏好。
+// SessionConfig 是一次服务端受管会话的客户端偏好。
 //
 // 这个结构只描述管理员允许本次会话使用的配置，不包含 Tailscale
 // API access token 或 auth key。默认值刻意保持为“仅发布当前 Wi-Fi 网关 /32”。
-type RescueConfig struct {
+type SessionConfig struct {
 	NetworkMode            string     `json:"networkMode"`
 	VPNEnabled             bool       `json:"vpnEnabled"`
 	AcceptRoutes           bool       `json:"acceptRoutes"`
@@ -56,14 +56,12 @@ type RescueConfig struct {
 	Hostname               string     `json:"hostname"`
 	NetfilterMode          string     `json:"netfilterMode"`
 	AppConnector           bool       `json:"appConnector"`
-	AutoUpdateCheck        bool       `json:"autoUpdateCheck"`
-	AutoUpdateApply        bool       `json:"autoUpdateApply"`
 	ExitPolicy             ExitPolicy `json:"exitPolicy"`
 }
 
-// DefaultRescueConfig 返回安全的默认会话配置。
-func DefaultRescueConfig() RescueConfig {
-	return RescueConfig{
+// DefaultSessionConfig 返回安全的默认会话配置。
+func DefaultSessionConfig() SessionConfig {
+	return SessionConfig{
 		NetworkMode:      NetworkModeCellular,
 		VPNEnabled:       true,
 		AcceptRoutes:     true,
@@ -71,23 +69,21 @@ func DefaultRescueConfig() RescueConfig {
 		SubnetRouter:     true,
 		AutoGatewayRoute: true,
 		AdvertiseRoutes:  []string{},
-		AutoUpdateCheck:  true,
-		AutoUpdateApply:  true,
 	}
 }
 
 // Normalize 校验并规范化管理端提交的配置，避免把未规范的 CIDR 直接交给
 // Android 或 Tailscale 控制面。返回值是可以安全序列化给客户端的副本。
-func (c RescueConfig) Normalize() (RescueConfig, error) {
+func (c SessionConfig) Normalize() (SessionConfig, error) {
 	c.NetworkMode = strings.TrimSpace(strings.ToLower(c.NetworkMode))
 	if c.NetworkMode == "" {
 		c.NetworkMode = NetworkModeDefault
 	}
 	if c.NetworkMode != NetworkModeDefault && c.NetworkMode != NetworkModeCellular {
-		return RescueConfig{}, fmt.Errorf("networkMode 必须是 default 或 cellular")
+		return SessionConfig{}, fmt.Errorf("networkMode 必须是 default 或 cellular")
 	}
 	if c.AutoGatewayRoute && c.AutoWiFiSubnetRoute {
-		return RescueConfig{}, fmt.Errorf("不能同时自动发布 Wi-Fi 网关和整个 Wi-Fi 子网")
+		return SessionConfig{}, fmt.Errorf("不能同时自动发布 Wi-Fi 网关和整个 Wi-Fi 子网")
 	}
 	c.ExitNodeID = strings.TrimSpace(c.ExitNodeID)
 	c.ExitNodeIP = strings.TrimSpace(c.ExitNodeIP)
@@ -107,7 +103,7 @@ func (c RescueConfig) Normalize() (RescueConfig, error) {
 			selectors++
 		}
 		if selectors != 1 {
-			return RescueConfig{}, fmt.Errorf("启用 Exit Node 时必须且只能填写一个 exitNodeId、exitNodeIp 或 autoExitNode")
+			return SessionConfig{}, fmt.Errorf("启用 Exit Node 时必须且只能填写一个 exitNodeId、exitNodeIp 或 autoExitNode")
 		}
 	} else {
 		// 关闭 Exit Node 时清除旧选择，避免受管节点复用时留下隐式状态。
@@ -119,40 +115,37 @@ func (c RescueConfig) Normalize() (RescueConfig, error) {
 	if c.ExitNodeIP != "" {
 		address, err := netip.ParseAddr(c.ExitNodeIP)
 		if err != nil || !address.IsValid() {
-			return RescueConfig{}, fmt.Errorf("exitNodeIp 不是合法 IP 地址")
+			return SessionConfig{}, fmt.Errorf("exitNodeIp 不是合法 IP 地址")
 		}
 		c.ExitNodeIP = address.String()
 	}
 	if c.AutoExitNode != "" && c.AutoExitNode != "auto:any" {
-		return RescueConfig{}, fmt.Errorf("当前版本只支持 autoExitNode=auto:any")
-	}
-	if c.AutoUpdateApply && !c.AutoUpdateCheck {
-		return RescueConfig{}, fmt.Errorf("开启自动更新安装时必须同时开启检查更新")
+		return SessionConfig{}, fmt.Errorf("当前版本只支持 autoExitNode=auto:any")
 	}
 	if c.NetfilterMode != "" && c.NetfilterMode != "on" && c.NetfilterMode != "off" && c.NetfilterMode != "nodivert" {
-		return RescueConfig{}, fmt.Errorf("netfilterMode 必须是 on、off、nodivert 或空值")
+		return SessionConfig{}, fmt.Errorf("netfilterMode 必须是 on、off、nodivert 或空值")
 	}
 	if len(c.Hostname) > 255 || strings.ContainsAny(c.Hostname, "\r\n") {
-		return RescueConfig{}, fmt.Errorf("hostname 过长或包含换行符")
+		return SessionConfig{}, fmt.Errorf("hostname 过长或包含换行符")
 	}
 
 	c.ExitPolicy.NetworkChange = strings.TrimSpace(strings.ToLower(c.ExitPolicy.NetworkChange))
 	switch c.ExitPolicy.NetworkChange {
 	case NetworkExitNone, NetworkExitAnyChange, NetworkExitWiFiLost, NetworkExitCellularLost:
 	default:
-		return RescueConfig{}, fmt.Errorf("exitPolicy.networkChange 无效")
+		return SessionConfig{}, fmt.Errorf("exitPolicy.networkChange 无效")
 	}
 	const maxPolicySeconds = int64((365 * 24 * time.Hour) / time.Second)
 	if c.ExitPolicy.AfterConfigSeconds < 0 || c.ExitPolicy.AfterConfigSeconds > maxPolicySeconds {
-		return RescueConfig{}, fmt.Errorf("exitPolicy.afterConfigSeconds 必须在 0 到 %d 之间", maxPolicySeconds)
+		return SessionConfig{}, fmt.Errorf("exitPolicy.afterConfigSeconds 必须在 0 到 %d 之间", maxPolicySeconds)
 	}
 	if c.ExitPolicy.AfterLoginSeconds < 0 || c.ExitPolicy.AfterLoginSeconds > maxPolicySeconds {
-		return RescueConfig{}, fmt.Errorf("exitPolicy.afterLoginSeconds 必须在 0 到 %d 之间", maxPolicySeconds)
+		return SessionConfig{}, fmt.Errorf("exitPolicy.afterLoginSeconds 必须在 0 到 %d 之间", maxPolicySeconds)
 	}
 	if c.ExitPolicy.At != "" {
 		at, err := time.Parse(time.RFC3339, c.ExitPolicy.At)
 		if err != nil {
-			return RescueConfig{}, fmt.Errorf("exitPolicy.at 必须是 RFC3339 时间")
+			return SessionConfig{}, fmt.Errorf("exitPolicy.at 必须是 RFC3339 时间")
 		}
 		c.ExitPolicy.At = at.UTC().Format(time.RFC3339)
 	}
@@ -161,7 +154,7 @@ func (c RescueConfig) Normalize() (RescueConfig, error) {
 		c.AdvertiseRoutes = []string{}
 	}
 	if len(c.AdvertiseRoutes) > maxConfiguredRoutes {
-		return RescueConfig{}, fmt.Errorf("advertiseRoutes 最多允许 %d 条", maxConfiguredRoutes)
+		return SessionConfig{}, fmt.Errorf("advertiseRoutes 最多允许 %d 条", maxConfiguredRoutes)
 	}
 	routes := make([]string, 0, len(c.AdvertiseRoutes))
 	seen := make(map[string]struct{}, len(c.AdvertiseRoutes))
@@ -169,10 +162,10 @@ func (c RescueConfig) Normalize() (RescueConfig, error) {
 		route := strings.TrimSpace(raw)
 		prefix, err := netip.ParsePrefix(route)
 		if err != nil || !prefix.IsValid() || prefix != prefix.Masked() {
-			return RescueConfig{}, fmt.Errorf("advertiseRoutes 包含非法或非网络地址 CIDR: %q", raw)
+			return SessionConfig{}, fmt.Errorf("advertiseRoutes 包含非法或非网络地址 CIDR: %q", raw)
 		}
 		if prefix.Bits() == 0 && !c.AdvertiseExitNode {
-			return RescueConfig{}, fmt.Errorf("默认路由只能在开启 advertiseExitNode 时使用")
+			return SessionConfig{}, fmt.Errorf("默认路由只能在开启 advertiseExitNode 时使用")
 		}
 		canonical := prefix.String()
 		if _, exists := seen[canonical]; exists {
@@ -188,7 +181,7 @@ func (c RescueConfig) Normalize() (RescueConfig, error) {
 // EffectiveRoutes 计算本次会话实际交给 Tailscale 的 route 列表。
 // autoGatewayRoute 是默认最小权限路径；管理员显式配置的 subnet 和 exit
 // node 默认路由会在此基础上合并并去重。
-func (c RescueConfig) EffectiveRoutes(gatewayRoute, wifiSubnetRoute string) []string {
+func (c SessionConfig) EffectiveRoutes(gatewayRoute, wifiSubnetRoute string) []string {
 	routes := make([]string, 0, len(c.AdvertiseRoutes)+3)
 	seen := make(map[string]struct{})
 	add := func(route string) {
@@ -214,7 +207,7 @@ func (c RescueConfig) EffectiveRoutes(gatewayRoute, wifiSubnetRoute string) []st
 // EffectiveWiFiRoutes 只返回应该绑定到家庭 Wi-Fi 的目标前缀。
 // Exit Node 的默认路由属于远程 peer 到互联网的转发目标，必须留在蜂窝
 // Network 上，因此不会出现在这个列表中。
-func (c RescueConfig) EffectiveWiFiRoutes(gatewayRoute, wifiSubnetRoute string) []string {
+func (c SessionConfig) EffectiveWiFiRoutes(gatewayRoute, wifiSubnetRoute string) []string {
 	if !c.SubnetRouter {
 		return []string{}
 	}
@@ -245,11 +238,11 @@ func (c RescueConfig) EffectiveWiFiRoutes(gatewayRoute, wifiSubnetRoute string) 
 	return routes
 }
 
-func (c RescueConfig) RequiresWiFi() bool {
+func (c SessionConfig) RequiresWiFi() bool {
 	return c.SubnetRouter && (c.AutoGatewayRoute || c.AutoWiFiSubnetRoute)
 }
 
-func (c RescueConfig) LogoutAt(configCreatedAt, loginAt time.Time) time.Time {
+func (c SessionConfig) LogoutAt(configCreatedAt, loginAt time.Time) time.Time {
 	var candidates []time.Time
 	if c.ExitPolicy.AfterConfigSeconds > 0 {
 		candidates = append(candidates, configCreatedAt.Add(time.Duration(c.ExitPolicy.AfterConfigSeconds)*time.Second))

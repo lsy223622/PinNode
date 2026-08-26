@@ -1,0 +1,768 @@
+openapi: 3.1.0
+info:
+  title: PinNode HTTP API
+  version: 1.0.0
+  description: Current clean v1 contract implemented by the PinNode server.
+  license:
+    name: BSD 3-Clause
+    identifier: BSD-3-Clause
+servers:
+  - url: https://pinnode.example
+security: []
+tags:
+  - name: System
+    description: Health and protocol discovery.
+  - name: Admin auth
+    description: Administrator setup, login, session state, and logout.
+  - name: Credentials
+    description: Encrypted Tailscale management credential metadata.
+  - name: Pairing
+    description: Single-use pairing code creation.
+  - name: Sessions
+    description: Session provisioning, synchronization, and cleanup.
+x-reserved-extensions:
+  client-log-upload-v1:
+    path: /v1/sessions/{sessionId}/log-batches
+    method: POST
+    status: reserved-not-implemented
+  session-config-update-v1:
+    path: /v1/sessions/{sessionId}/config
+    method: PATCH
+    delivery: /v1/sessions/{sessionId}/sync
+    status: reserved-not-implemented
+paths:
+  /healthz:
+    get:
+      summary: Check service health
+      tags: [System]
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/meta:
+    get:
+      summary: Discover API protocol and capabilities
+      tags: [System]
+      operationId: getApiMeta
+      responses:
+        "200":
+          description: Protocol version, feature negotiation, and limits.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMeta"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/auth/state:
+    get:
+      summary: Read administrator authentication state
+      tags: [Admin auth]
+      operationId: getAdminAuthState
+      responses:
+        "200":
+          description: Setup and current admin authentication state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuthState"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/auth/pow:
+    get:
+      summary: Create a proof-of-work challenge
+      tags: [Admin auth]
+      operationId: getAdminPow
+      responses:
+        "200":
+          description: Short-lived proof-of-work challenge.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PowChallenge"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/auth/setup:
+    post:
+      summary: Create the first administrator
+      tags: [Admin auth]
+      operationId: setupAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAuthRequest"
+      responses:
+        "201":
+          description: Administrator created and signed in.
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/auth/login:
+    post:
+      summary: Sign in as administrator
+      tags: [Admin auth]
+      operationId: loginAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAuthRequest"
+      responses:
+        "200":
+          description: Administrator signed in.
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/auth/logout:
+    post:
+      summary: Sign out the administrator
+      tags: [Admin auth]
+      operationId: logoutAdmin
+      security:
+        - adminCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: Administrator signed out.
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/tailscale-credentials:
+    get:
+      summary: List Tailscale credential metadata
+      tags: [Credentials]
+      operationId: listTailscaleCredentials
+      security:
+        - adminCookie: []
+      responses:
+        "200":
+          description: Credential metadata. Secrets are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credentials]
+                properties:
+                  credentials:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TailscaleCredential"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Validate and store a Tailscale credential
+      tags: [Credentials]
+      operationId: createTailscaleCredential
+      security:
+        - adminCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ApiTokenCredentialRequest"
+                - $ref: "#/components/schemas/OAuthCredentialRequest"
+      responses:
+        "201":
+          description: Credential validated and stored encrypted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TailscaleCredential"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/pairing-codes:
+    post:
+      summary: Create a single-use pairing code
+      tags: [Pairing]
+      operationId: createPairingCode
+      security:
+        - adminCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [credentialId]
+              properties:
+                credentialId:
+                  type: string
+                  minLength: 1
+                config:
+                  $ref: "#/components/schemas/SessionConfigPatch"
+      responses:
+        "201":
+          description: Single-use six-digit pairing code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingCode"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/sessions:
+    get:
+      summary: List session history
+      tags: [Sessions]
+      operationId: listSessions
+      security:
+        - adminCookie: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Session history, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/HistoricalSession"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create a session idempotently
+      tags: [Sessions]
+      operationId: createSession
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartSessionRequest"
+      responses:
+        "201":
+          description: New session, or an identical encrypted replay for the same key and request.
+          headers:
+            Idempotent-Replayed:
+              description: Present and true only for a replay.
+              schema: {type: string, const: "true"}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartSessionResponse"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      summary: Read a session
+      tags: [Sessions]
+      operationId: getSession
+      security:
+        - sessionBearer: []
+      responses:
+        "200":
+          description: Current session state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/sessions/{sessionId}/device:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      summary: Attach the exact managed device
+      tags: [Sessions]
+      operationId: attachSessionDevice
+      security:
+        - sessionBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [nodeId]
+              properties:
+                nodeId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+      responses:
+        "200":
+          description: Exact managed node attached and routes enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachedDevice"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/sessions/{sessionId}/sync:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      summary: Synchronize session state and configuration
+      tags: [Sessions]
+      operationId: syncSession
+      security:
+        - sessionBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionSyncRequest"
+      responses:
+        "200":
+          description: Acknowledges client state and optionally returns a newer full config snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSyncResponse"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/sessions/{sessionId}/stop:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      summary: Stop and clean up a session
+      tags: [Sessions]
+      operationId: stopSession
+      security:
+        - sessionBearer: []
+      responses:
+        "200":
+          description: Session stopped, or had already stopped.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopSessionResponse"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    adminCookie:
+      type: apiKey
+      in: cookie
+      name: pinnode_admin_session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+    sessionBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: PinNode session token
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: "^[!-~]+$"
+  responses:
+    Error:
+      description: Structured API error.
+      headers:
+        X-Request-ID:
+          required: true
+          schema: {type: string}
+        Retry-After:
+          description: Seconds until retry; present on rate limits.
+          schema: {type: integer}
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    NullableTime:
+      type: [string, "null"]
+      format: date-time
+    StatusResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, const: ok}
+    ApiMeta:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, protocolVersion, features, limits]
+      properties:
+        apiVersion: {type: string, const: v1}
+        protocolVersion: {type: integer, const: 1}
+        features:
+          type: array
+          items: {type: string}
+        limits:
+          type: object
+          additionalProperties: false
+          required: [jsonBodyBytes]
+          properties:
+            jsonBodyBytes: {type: integer, const: 16384}
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code: {type: string, minLength: 1}
+            message: {type: string}
+            retryable: {type: boolean}
+        requestId: {type: string, minLength: 1}
+    AdminAuthState:
+      type: object
+      required: [setupRequired, setupAllowed, authenticated]
+      properties:
+        setupRequired: {type: boolean}
+        setupAllowed: {type: boolean}
+        authenticated: {type: boolean}
+        username: {type: string}
+        csrfToken: {type: string}
+        expiresAt: {type: string, format: date-time}
+    PowChallenge:
+      type: object
+      additionalProperties: false
+      required: [id, challenge, difficulty, expiresAt]
+      properties:
+        id: {type: string}
+        challenge: {type: string}
+        difficulty: {type: integer, minimum: 1}
+        expiresAt: {type: string, format: date-time}
+    AdminAuthRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password, powId, powNonce]
+      properties:
+        username: {type: string}
+        password: {type: string, format: password}
+        powId: {type: string}
+        powNonce: {type: string}
+    AdminSession:
+      type: object
+      additionalProperties: false
+      required: [authenticated, username, csrfToken, expiresAt]
+      properties:
+        authenticated: {type: boolean, const: true}
+        username: {type: string}
+        csrfToken: {type: string}
+        expiresAt: {type: string, format: date-time}
+    ApiTokenCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [name, token]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        type: {type: string, enum: [api_token], default: api_token}
+        token: {type: string, writeOnly: true, pattern: "^tskey-api-"}
+    OAuthCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [name, type, clientId, clientSecret]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        type: {type: string, const: oauth_client}
+        clientId: {type: string, writeOnly: true}
+        clientSecret: {type: string, writeOnly: true, format: password}
+    TailscaleCredential:
+      type: object
+      additionalProperties: false
+      required: [id, name, type, createdAt, lastUsedAt]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string, enum: [api_token, oauth_client]}
+        createdAt: {type: string, format: date-time}
+        lastUsedAt: {$ref: "#/components/schemas/NullableTime"}
+    ExitPolicyPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        onAppClose: {type: boolean}
+        networkChange: {type: string, enum: ["", any-change, wifi-lost, cellular-lost]}
+        afterConfigSeconds: {type: integer, minimum: 0, maximum: 31536000}
+        afterLoginSeconds: {type: integer, minimum: 0, maximum: 31536000}
+        at: {type: string}
+    ExitPolicy:
+      allOf:
+        - $ref: "#/components/schemas/ExitPolicyPatch"
+        - type: object
+          required: [onAppClose, networkChange, afterConfigSeconds, afterLoginSeconds, at]
+    SessionConfigPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        networkMode: {type: string, enum: ["default", "cellular"]}
+        vpnEnabled: {type: boolean}
+        acceptRoutes: {type: boolean}
+        acceptDNS: {type: boolean}
+        useExitNode: {type: boolean}
+        exitNodeId: {type: string}
+        exitNodeIp: {type: string}
+        autoExitNode: {type: string, enum: ["", "auto:any"]}
+        exitNodeAllowLanAccess: {type: boolean}
+        subnetRouter: {type: boolean}
+        autoGatewayRoute: {type: boolean}
+        autoWiFiSubnetRoute: {type: boolean}
+        advertiseRoutes:
+          type: array
+          maxItems: 16
+          items: {type: string}
+        advertiseExitNode: {type: boolean}
+        disableSNAT: {type: boolean}
+        noStatefulFiltering: {type: boolean}
+        shieldsUp: {type: boolean}
+        runSSHServer: {type: boolean}
+        runWebClient: {type: boolean}
+        postureChecking: {type: boolean}
+        remoteConfig: {type: boolean}
+        hostname: {type: string, maxLength: 255}
+        netfilterMode: {type: string, enum: ["", "on", "off", "nodivert"]}
+        appConnector: {type: boolean}
+        exitPolicy: {$ref: "#/components/schemas/ExitPolicyPatch"}
+    SessionConfig:
+      allOf:
+        - $ref: "#/components/schemas/SessionConfigPatch"
+        - type: object
+          required:
+            - networkMode
+            - vpnEnabled
+            - acceptRoutes
+            - acceptDNS
+            - useExitNode
+            - exitNodeId
+            - exitNodeIp
+            - autoExitNode
+            - exitNodeAllowLanAccess
+            - subnetRouter
+            - autoGatewayRoute
+            - autoWiFiSubnetRoute
+            - advertiseRoutes
+            - advertiseExitNode
+            - disableSNAT
+            - noStatefulFiltering
+            - shieldsUp
+            - runSSHServer
+            - runWebClient
+            - postureChecking
+            - remoteConfig
+            - hostname
+            - netfilterMode
+            - appConnector
+            - exitPolicy
+          properties:
+            exitPolicy: {$ref: "#/components/schemas/ExitPolicy"}
+    PairingCode:
+      type: object
+      additionalProperties: false
+      required: [code, expiresAt, config]
+      properties:
+        code: {type: string, pattern: "^[0-9]{6}$"}
+        expiresAt: {type: string, format: date-time}
+        config: {$ref: "#/components/schemas/SessionConfig"}
+    StartSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code: {type: string, pattern: "^[0-9]{6}$"}
+        gatewayRoute: {type: string, default: ""}
+        wifiSubnetRoute: {type: string, default: ""}
+    StartSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [protocolVersion, serverFeatures, sessionId, sessionToken, authKey, provisioningHostname, configRevision, syncIntervalSeconds, gatewayRoute, routes, wifiRoutes, config, expiresAt]
+      properties:
+        protocolVersion: {type: integer, const: 1}
+        serverFeatures:
+          type: array
+          items: {type: string}
+        sessionId: {type: string}
+        sessionToken: {type: string, writeOnly: true}
+        authKey: {type: string, writeOnly: true}
+        provisioningHostname: {type: string}
+        configRevision: {type: integer, minimum: 1}
+        syncIntervalSeconds: {type: integer, minimum: 1}
+        gatewayRoute: {type: string}
+        routes:
+          type: array
+          items: {type: string}
+        wifiRoutes:
+          type: array
+          items: {type: string}
+        config: {$ref: "#/components/schemas/SessionConfig"}
+        expiresAt: {$ref: "#/components/schemas/NullableTime"}
+    Session:
+      type: object
+      required: [sessionId, gatewayRoute, routes, wifiRoutes, config, configRevision, appliedConfigRevision, deviceId, status, createdAt, expiresAt]
+      properties:
+        sessionId: {type: string}
+        gatewayRoute: {type: string}
+        routes:
+          type: array
+          items: {type: string}
+        wifiRoutes:
+          type: array
+          items: {type: string}
+        config: {$ref: "#/components/schemas/SessionConfig"}
+        configRevision: {type: integer, minimum: 1}
+        appliedConfigRevision: {type: integer, minimum: 0}
+        deviceId: {type: string}
+        status: {type: string, enum: [provisioning, active, cleaning, stopped, cleanup_failed]}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {$ref: "#/components/schemas/NullableTime"}
+    HistoricalSession:
+      allOf:
+        - $ref: "#/components/schemas/Session"
+        - type: object
+          required: [authKeyId, provisioningHostname, provisioningDeadline, lastSeenAt, syncDeadline, stoppedAt, stopReason, cleanupError]
+          properties:
+            authKeyId: {type: string}
+            provisioningHostname: {type: string}
+            provisioningDeadline: {$ref: "#/components/schemas/NullableTime"}
+            lastSeenAt: {$ref: "#/components/schemas/NullableTime"}
+            syncDeadline: {$ref: "#/components/schemas/NullableTime"}
+            stoppedAt: {$ref: "#/components/schemas/NullableTime"}
+            stopReason: {type: string}
+            cleanupError: {type: string}
+    AttachedDevice:
+      type: object
+      additionalProperties: false
+      required: [nodeId, gatewayRoute, routes, wifiRoutes, enabled]
+      properties:
+        nodeId: {type: string}
+        gatewayRoute: {type: string}
+        routes:
+          type: array
+          items: {type: string}
+        wifiRoutes:
+          type: array
+          items: {type: string}
+        enabled: {type: boolean, const: true}
+    SessionSyncRequest:
+      type: object
+      additionalProperties: false
+      required: [protocolVersion, appliedConfigRevision, clientVersion, clientCapabilities]
+      properties:
+        protocolVersion: {type: integer, const: 1}
+        appliedConfigRevision: {type: integer, minimum: 0}
+        clientVersion: {type: string, maxLength: 128}
+        clientCapabilities:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64, pattern: "^[a-z0-9.-]+$"}
+    SessionConfigSnapshot:
+      type: object
+      additionalProperties: false
+      required: [revision, config, gatewayRoute, routes, wifiRoutes, expiresAt]
+      properties:
+        revision: {type: integer, minimum: 1}
+        config: {$ref: "#/components/schemas/SessionConfig"}
+        gatewayRoute: {type: string}
+        routes:
+          type: array
+          items: {type: string}
+        wifiRoutes:
+          type: array
+          items: {type: string}
+        expiresAt: {$ref: "#/components/schemas/NullableTime"}
+    SessionSyncResponse:
+      type: object
+      additionalProperties: false
+      required: [protocolVersion, serverFeatures, status, serverTime, nextSyncAfterSeconds, syncDeadline, desiredConfig]
+      properties:
+        protocolVersion: {type: integer, const: 1}
+        serverFeatures:
+          type: array
+          items: {type: string}
+        status: {type: string, const: active}
+        serverTime: {type: string, format: date-time}
+        nextSyncAfterSeconds: {type: integer, minimum: 1}
+        syncDeadline: {$ref: "#/components/schemas/NullableTime"}
+        desiredConfig:
+          oneOf:
+            - $ref: "#/components/schemas/SessionConfigSnapshot"
+            - type: "null"
+    StopSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [stopped, already-stopped]}

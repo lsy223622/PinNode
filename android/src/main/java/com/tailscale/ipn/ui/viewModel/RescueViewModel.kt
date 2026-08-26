@@ -6,12 +6,12 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tailscale.ipn.App
-import com.tailscale.ipn.RescueSessionManager.RescueConfigurationException
-import com.tailscale.ipn.RescueSessionManager.RescueInvalidCodeException
-import com.tailscale.ipn.RescueSessionManager.RescueServerHttpException
-import com.tailscale.ipn.RescueTailscalePath
-import com.tailscale.ipn.RescueSessionManager.RescueVpnPermissionException
 import com.tailscale.ipn.R
+import com.tailscale.ipn.RescueSessionManager.InvalidPairingCodeException
+import com.tailscale.ipn.RescueSessionManager.PinNodeApiConfigurationException
+import com.tailscale.ipn.RescueSessionManager.PinNodeApiException
+import com.tailscale.ipn.RescueSessionManager.RescueVpnPermissionException
+import com.tailscale.ipn.RescueTailscalePath
 import com.tailscale.ipn.ui.notifier.Notifier
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -109,10 +109,10 @@ class RescueViewModel : ViewModel() {
   private fun userMessage(error: Throwable, operation: Operation): String {
     val context = App.get()
     return when {
-      error is RescueInvalidCodeException -> context.getString(R.string.rescue_error_invalid_code)
-      error is RescueConfigurationException ->
+      error is InvalidPairingCodeException -> context.getString(R.string.rescue_error_invalid_code)
+      error is PinNodeApiConfigurationException ->
           error.message ?: context.getString(R.string.rescue_error_configuration)
-      error is RescueServerHttpException -> serverMessage(context, error.status)
+      error is PinNodeApiException -> serverMessage(context, error)
       error is RescueVpnPermissionException ->
           context.getString(R.string.rescue_error_vpn_permission)
       error.hasCause<SSLException>() -> context.getString(R.string.rescue_error_tls)
@@ -129,7 +129,22 @@ class RescueViewModel : ViewModel() {
     }
   }
 
-  private fun serverMessage(context: android.content.Context, status: Int): String =
+  private fun serverMessage(
+      context: android.content.Context,
+      error: PinNodeApiException,
+  ): String =
+      when (error.code) {
+        "pairing_code_format_invalid" -> context.getString(R.string.rescue_error_http_400)
+        "pairing_code_invalid" -> context.getString(R.string.rescue_error_http_401)
+        "rate_limited" -> context.getString(R.string.rescue_error_http_429)
+        "idempotency_key_conflict",
+        "session_state_conflict" -> context.getString(R.string.rescue_error_http_409)
+        "session_expired",
+        "session_config_expired" -> context.getString(R.string.rescue_error_http_410)
+        else -> serverStatusMessage(context, error.status)
+      }
+
+  private fun serverStatusMessage(context: android.content.Context, status: Int): String =
       when (status) {
         400 -> context.getString(R.string.rescue_error_http_400)
         401 -> context.getString(R.string.rescue_error_http_401)

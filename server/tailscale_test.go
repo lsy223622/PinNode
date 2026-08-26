@@ -17,7 +17,9 @@ func TestExchangeOAuthTokenUsesClientCredentialsForm(t *testing.T) {
 			t.Fatal(err)
 		}
 		if r.Form.Get("grant_type") != "client_credentials" ||
-			r.Form.Get("client_id") != "client-id" || r.Form.Get("client_secret") != "client-secret" {
+			r.Form.Get("client_id") != "client-id" || r.Form.Get("client_secret") != "client-secret" ||
+			r.Form.Get("scope") != "auth_keys devices:core devices:routes" ||
+			r.Form.Get("tags") != managedDeviceTag {
 			t.Errorf("OAuth client credentials 表单错误: %#v", r.Form)
 		}
 		if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "" {
@@ -93,6 +95,30 @@ func TestCreateAuthKeyUsesManagedDeviceTag(t *testing.T) {
 
 	client := NewTailscaleClient(Config{TailscaleBaseURL: server.URL, TailscaleTailnet: "-"})
 	if _, err := client.CreateAuthKey(t.Context(), "tskey-oauth-test", 5*time.Minute, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetDeviceRoutesEncodesEmptyArray(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/device/node-test/routes" {
+			t.Errorf("设置设备路由请求错误: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			Routes []string `json:"routes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Routes == nil || len(payload.Routes) != 0 {
+			t.Errorf("空路由必须编码为 []: %#v", payload.Routes)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewTailscaleClient(Config{TailscaleBaseURL: server.URL, TailscaleTailnet: "-"})
+	if err := client.SetDeviceRoutes(t.Context(), "tskey-api-test", "node-test", nil); err != nil {
 		t.Fatal(err)
 	}
 }

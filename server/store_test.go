@@ -47,6 +47,80 @@ func TestLegacyCredentialMigrationDefaultsToAPIToken(t *testing.T) {
 	}
 }
 
+func TestLegacyHeartbeatLeaseMigratesToSyncDeadline(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "legacy-sessions.db")
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE sessions (
+		id TEXT PRIMARY KEY,
+		token_hash TEXT NOT NULL,
+		auth_key_id TEXT NOT NULL,
+		provisioning_name TEXT NOT NULL UNIQUE,
+		route TEXT NOT NULL,
+		routes_json TEXT NOT NULL,
+		wifi_routes_json TEXT NOT NULL,
+		config_json TEXT NOT NULL,
+		device_id TEXT UNIQUE,
+		created_at INTEGER NOT NULL,
+		provisioning_deadline INTEGER,
+		expires_at INTEGER,
+		last_seen_at INTEGER,
+		heartbeat_deadline INTEGER,
+		status TEXT NOT NULL,
+		cleanup_error TEXT NOT NULL DEFAULT '',
+		cleanup_after INTEGER,
+		stopped_at INTEGER,
+		stop_reason TEXT NOT NULL DEFAULT '',
+		updated_at INTEGER NOT NULL
+	)`)
+	if err == nil {
+		_, err = db.Exec(`CREATE INDEX sessions_reap_idx
+			ON sessions(status, provisioning_deadline, expires_at, heartbeat_deadline, cleanup_after)`)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	deadline := now.Add(-time.Second)
+	if err == nil {
+		_, err = db.Exec(`INSERT INTO sessions(
+			id, token_hash, auth_key_id, provisioning_name, route, routes_json,
+			wifi_routes_json, config_json, created_at, last_seen_at, heartbeat_deadline,
+			status, updated_at
+		) VALUES
+			('leased', 'hash-1', 'key-1', 'pinnode-leased', '', '[]', '[]',
+			 '{"advertiseRoutes":[],"exitPolicy":{"onAppClose":true}}', ?, ?, ?, 'active', ?),
+			('persistent', 'hash-2', 'key-2', 'pinnode-persistent', '', '[]', '[]',
+			 '{"advertiseRoutes":[],"exitPolicy":{"onAppClose":false}}', ?, ?, ?, 'active', ?)`,
+			toMillis(now.Add(-time.Hour)), toMillis(now), toMillis(deadline), toMillis(now),
+			toMillis(now.Add(-time.Hour)), toMillis(now), toMillis(deadline), toMillis(now),
+		)
+	}
+	if closeErr := db.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	leased, ok, err := store.GetSession("leased")
+	if err != nil || !ok || !leased.SyncDeadline.Equal(deadline) || leased.ConfigRevision != 1 {
+		t.Fatalf("旧租约迁移错误: session=%+v ok=%v err=%v", leased, ok, err)
+	}
+	persistent, ok, err := store.GetSession("persistent")
+	if err != nil || !ok || !persistent.SyncDeadline.IsZero() {
+		t.Fatalf("长期会话错误保留旧租约: session=%+v ok=%v err=%v", persistent, ok, err)
+	}
+	reapable, err := store.ReapableSessions(now)
+	if err != nil || len(reapable) != 1 || reapable[0].ID != "leased" {
+		t.Fatalf("迁移后的回收集合错误: sessions=%+v err=%v", reapable, err)
+	}
+}
+
 func TestConsumeCodeIsAtomicAndSingleUse(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
@@ -90,10 +164,10 @@ func TestExpiredCodeCannotBeConsumed(t *testing.T) {
 	}
 }
 
-func TestRescueConfigKeepsEmptyRoutesAsArray(t *testing.T) {
+func TestSessionConfigKeepsEmptyRoutesAsArray(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
-	if err := store.PutCodeWithConfig("empty-routes", now.Add(time.Minute), RescueConfig{}); err != nil {
+	if err := store.PutCodeWithConfig("empty-routes", now.Add(time.Minute), SessionConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	config, ok, err := store.RedeemCode("empty-routes", now)
@@ -227,17 +301,17 @@ func TestDeviceCanOnlyBelongToOneSession(t *testing.T) {
 	}
 }
 
-func TestHeartbeatDeadlineMakesSessionReapable(t *testing.T) {
+func TestSyncDeadlineMakesSessionReapable(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
 	if err := store.PutSession(Session{
-		ID:                "heartbeat-expired",
-		ProvisioningName:  "pinnode-heartbeat",
-		Config:            RescueConfig{ExitPolicy: ExitPolicy{OnAppClose: true}},
-		CreatedAt:         now.Add(-time.Hour),
-		HeartbeatDeadline: now.Add(-time.Second),
-		Status:            SessionActive,
-		UpdatedAt:         now.Add(-time.Second),
+		ID:               "sync-expired",
+		ProvisioningName: "pinnode-sync",
+		Config:           SessionConfig{ExitPolicy: ExitPolicy{OnAppClose: true}},
+		CreatedAt:        now.Add(-time.Hour),
+		SyncDeadline:     now.Add(-time.Second),
+		Status:           SessionActive,
+		UpdatedAt:        now.Add(-time.Second),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,21 +319,21 @@ func TestHeartbeatDeadlineMakesSessionReapable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 1 || sessions[0].ID != "heartbeat-expired" {
-		t.Fatalf("心跳超时会话未进入清理队列: %+v", sessions)
+	if len(sessions) != 1 || sessions[0].ID != "sync-expired" {
+		t.Fatalf("同步超时会话未进入清理队列: %+v", sessions)
 	}
 }
 
-func TestHeartbeatDeadlineIgnoredWithoutAppClose(t *testing.T) {
+func TestSyncDeadlineIgnoredWithoutAppClose(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
 	if err := store.PutSession(Session{
-		ID:                "persistent-session",
-		ProvisioningName:  "pinnode-persistent",
-		CreatedAt:         now.Add(-time.Hour),
-		HeartbeatDeadline: now.Add(-time.Second),
-		Status:            SessionActive,
-		UpdatedAt:         now.Add(-time.Second),
+		ID:               "persistent-session",
+		ProvisioningName: "pinnode-persistent",
+		CreatedAt:        now.Add(-time.Hour),
+		SyncDeadline:     now.Add(-time.Second),
+		Status:           SessionActive,
+		UpdatedAt:        now.Add(-time.Second),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -268,6 +342,6 @@ func TestHeartbeatDeadlineIgnoredWithoutAppClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(sessions) != 0 {
-		t.Fatalf("长期会话不应因心跳超时进入清理队列: %+v", sessions)
+		t.Fatalf("长期会话不应因同步超时进入清理队列: %+v", sessions)
 	}
 }

@@ -61,10 +61,10 @@ SameSite=Strict Cookie 中保存随机会话令牌，数据库只保存摘要；
 Session，保证供应、设备校验、路由操作和清理使用同一凭据。
 
 ```text
-PIN issued → consumed → one-time key + provisioning challenge issued
+PIN issued → validated → one-time key issued → PIN/session/replay committed atomically
     → persistent node joined → creation/name/tag verified → unique node binding
-    → exact routes enabled → optional onAppClose heartbeat lease active
-    → explicit/policy/optional heartbeat exit → routes withdrawn → device deleted
+    → exact routes enabled → revisioned sync → optional onAppClose lease active
+    → explicit/policy/optional sync timeout → routes withdrawn → device deleted
 ```
 
 auth key 有效期十分钟、`reusable=false`、`preauthorized=true`；加入后的节点必须是
@@ -74,10 +74,10 @@ auth key 有效期十分钟、`reusable=false`、`preauthorized=true`；加入�
 网络模式、路由和退出定时器，并在已有 VPN 权限时重新请求 VPN service。
 
 时间退出支持：配置发布后时长、登录后时长和固定 RFC3339 时间，多个条件取最早者。
-网络退出支持任意变化、Wi-Fi 丢失或移动数据丢失。仅 `onAppClose` 会话按服务端下发
-间隔续租，默认五分钟未收到心跳即清理；普通长期会话不建立心跳 deadline。停止接口和
-服务端清理均按数据库唯一绑定的精确 node ID 操作；hostname 只用于首次供应挑战，
-不用于后续模糊选择。
+网络退出支持任意变化、Wi-Fi 丢失或移动数据丢失。所有活动会话按服务端下发间隔同步
+配置 revision；仅 `onAppClose` 会话同时续期默认五分钟的清理租约。普通长期会话没有
+`syncDeadline`，但仍通过同一接口接收会话中配置更新。停止接口和服务端清理均按数据库
+唯一绑定的精确 node ID 操作；hostname 只用于首次供应挑战，不用于后续模糊选择。
 
 应用关闭策略需要兼容两类 Android 行为：
 

@@ -17,7 +17,7 @@ type PairingCode struct {
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
 	UsedAt       time.Time
-	Config       RescueConfig
+	Config       SessionConfig
 }
 
 type AdminUser struct {
@@ -67,27 +67,36 @@ const (
 )
 
 type Session struct {
-	ID                   string
-	TokenHash            string
-	CredentialID         string
-	AuthKeyID            string
-	ProvisioningName     string
-	Route                string
-	Routes               []string
-	WiFiRoutes           []string
-	Config               RescueConfig
-	DeviceID             string
-	CreatedAt            time.Time
-	ProvisioningDeadline time.Time
-	ExpiresAt            time.Time
-	LastSeenAt           time.Time
-	HeartbeatDeadline    time.Time
-	Status               SessionStatus
-	CleanupErr           string
-	CleanupAfter         time.Time
-	StoppedAt            time.Time
-	StopReason           string
-	UpdatedAt            time.Time
+	ID                    string
+	TokenHash             string
+	CredentialID          string
+	AuthKeyID             string
+	ProvisioningName      string
+	Route                 string
+	Routes                []string
+	WiFiRoutes            []string
+	Config                SessionConfig
+	ConfigRevision        int64
+	AppliedConfigRevision int64
+	DeviceID              string
+	CreatedAt             time.Time
+	ProvisioningDeadline  time.Time
+	ExpiresAt             time.Time
+	LastSeenAt            time.Time
+	SyncDeadline          time.Time
+	Status                SessionStatus
+	CleanupErr            string
+	CleanupAfter          time.Time
+	StoppedAt             time.Time
+	StopReason            string
+	UpdatedAt             time.Time
+}
+
+type SessionStartReplay struct {
+	RequestHash string
+	SessionID   string
+	Ciphertext  []byte
+	ExpiresAt   time.Time
 }
 
 type Store struct {
@@ -150,12 +159,14 @@ func (s *Store) migrate() error {
 			routes_json TEXT NOT NULL,
 			wifi_routes_json TEXT NOT NULL,
 			config_json TEXT NOT NULL,
+			config_revision INTEGER NOT NULL DEFAULT 1,
+			applied_config_revision INTEGER NOT NULL DEFAULT 0,
 			device_id TEXT UNIQUE,
 			created_at INTEGER NOT NULL,
 			provisioning_deadline INTEGER,
 			expires_at INTEGER,
 			last_seen_at INTEGER,
-			heartbeat_deadline INTEGER,
+			sync_deadline INTEGER,
 			status TEXT NOT NULL,
 			cleanup_error TEXT NOT NULL DEFAULT '',
 			cleanup_after INTEGER,
@@ -163,8 +174,16 @@ func (s *Store) migrate() error {
 			stop_reason TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		)`,
-		`CREATE INDEX IF NOT EXISTS sessions_reap_idx
-			ON sessions(status, provisioning_deadline, expires_at, heartbeat_deadline, cleanup_after)`,
+		`CREATE TABLE IF NOT EXISTS session_start_replays (
+			idempotency_key_hash TEXT PRIMARY KEY,
+			request_hash TEXT NOT NULL,
+			session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+			response_cipher BLOB NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS session_start_replays_expiry_idx
+			ON session_start_replays(expires_at)`,
 		`CREATE TABLE IF NOT EXISTS admin_users (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			username TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -192,9 +211,6 @@ func (s *Store) migrate() error {
 			last_used_at INTEGER
 		)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, unixepoch() * 1000)`,
-		`UPDATE sessions SET heartbeat_deadline = NULL
-			WHERE heartbeat_deadline IS NOT NULL
-			AND COALESCE(json_extract(config_json, '$.exitPolicy.onAppClose'), 0) != 1`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, unixepoch() * 1000)`,
 	}
 	for _, statement := range statements {
@@ -211,35 +227,52 @@ func (s *Store) migrate() error {
 	if err := s.ensureColumn("tailscale_credentials", "kind", "kind TEXT NOT NULL DEFAULT 'api_token'"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("sessions", "config_revision", "config_revision INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sessions", "applied_config_revision", "applied_config_revision INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sessions", "sync_deadline", "sync_deadline INTEGER"); err != nil {
+		return err
+	}
+	hasHeartbeatDeadline, err := s.hasColumn("sessions", "heartbeat_deadline")
+	if err != nil {
+		return err
+	}
+	if hasHeartbeatDeadline {
+		if _, err := s.db.Exec(`UPDATE sessions SET sync_deadline = heartbeat_deadline
+			WHERE sync_deadline IS NULL AND heartbeat_deadline IS NOT NULL`); err != nil {
+			return fmt.Errorf("迁移会话同步租约: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE sessions SET sync_deadline = NULL
+		WHERE sync_deadline IS NOT NULL
+		AND COALESCE(json_extract(config_json, '$.exitPolicy.onAppClose'), 0) != 1`); err != nil {
+		return fmt.Errorf("规范会话同步租约: %w", err)
+	}
+	if _, err := s.db.Exec(`DROP INDEX IF EXISTS sessions_reap_idx`); err != nil {
+		return fmt.Errorf("迁移会话清理索引: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS sessions_reap_idx
+		ON sessions(status, provisioning_deadline, expires_at, sync_deadline, cleanup_after)`); err != nil {
+		return fmt.Errorf("创建会话清理索引: %w", err)
+	}
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, unixepoch() * 1000)`); err != nil {
 		return fmt.Errorf("记录 SQLite 迁移: %w", err)
 	}
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, unixepoch() * 1000)`); err != nil {
 		return fmt.Errorf("记录 SQLite 迁移: %w", err)
 	}
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, unixepoch() * 1000)`); err != nil {
+		return fmt.Errorf("记录 SQLite 迁移: %w", err)
+	}
 	return nil
 }
 
 func (s *Store) ensureColumn(table, column, definition string) error {
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	found, err := s.hasColumn(table, column)
 	if err != nil {
-		return fmt.Errorf("检查 SQLite 列 %s.%s: %w", table, column, err)
-	}
-	found := false
-	for rows.Next() {
-		var cid int
-		var name, dataType string
-		var notNull, primaryKey int
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
-			rows.Close()
-			return err
-		}
-		if name == column {
-			found = true
-		}
-	}
-	if err := rows.Close(); err != nil {
 		return err
 	}
 	if found {
@@ -249,6 +282,31 @@ func (s *Store) ensureColumn(table, column, definition string) error {
 		return fmt.Errorf("添加 SQLite 列 %s.%s: %w", table, column, err)
 	}
 	return nil
+}
+
+func (s *Store) hasColumn(table, column string) (bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, fmt.Errorf("检查 SQLite 列 %s.%s: %w", table, column, err)
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return false, err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	return found, nil
 }
 
 func (s *Store) AdminExists() (bool, error) {
@@ -460,19 +518,19 @@ func scanTailscaleCredential(scanner rowScanner) (TailscaleCredential, error) {
 }
 
 func (s *Store) PutCode(hash string, expiresAt time.Time) error {
-	return s.PutCodeWithConfig(hash, expiresAt, DefaultRescueConfig())
+	return s.PutCodeWithConfig(hash, expiresAt, DefaultSessionConfig())
 }
 
-func (s *Store) PutCodeWithConfig(hash string, expiresAt time.Time, config RescueConfig) error {
+func (s *Store) PutCodeWithConfig(hash string, expiresAt time.Time, config SessionConfig) error {
 	return s.PutCodeWithConfigAt(hash, time.Now(), expiresAt, config)
 }
 
-func (s *Store) PutCodeWithConfigAt(hash string, createdAt, expiresAt time.Time, config RescueConfig) error {
+func (s *Store) PutCodeWithConfigAt(hash string, createdAt, expiresAt time.Time, config SessionConfig) error {
 	return s.PutCodeWithCredentialAt(hash, "", createdAt, expiresAt, config)
 }
 
-func (s *Store) PutCodeWithCredentialAt(hash, credentialID string, createdAt, expiresAt time.Time, config RescueConfig) error {
-	encoded, err := json.Marshal(cloneRescueConfig(config))
+func (s *Store) PutCodeWithCredentialAt(hash, credentialID string, createdAt, expiresAt time.Time, config SessionConfig) error {
+	encoded, err := json.Marshal(cloneSessionConfig(config))
 	if err != nil {
 		return fmt.Errorf("编码配对配置: %w", err)
 	}
@@ -491,20 +549,42 @@ func (s *Store) ConsumeCode(hash string, now time.Time) (bool, error) {
 	return ok, err
 }
 
-func (s *Store) RedeemCode(hash string, now time.Time) (RescueConfig, bool, error) {
+func (s *Store) GetRedeemableCodeWithCredential(hash string, now time.Time) (SessionConfig, time.Time, string, bool, error) {
+	var createdAt int64
+	var encoded string
+	var credentialID sql.NullString
+	err := s.db.QueryRow(
+		`SELECT created_at, config_json, credential_id FROM pairing_codes
+		 WHERE hash = ? AND used_at IS NULL AND expires_at > ?`,
+		hash, toMillis(now),
+	).Scan(&createdAt, &encoded, &credentialID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionConfig{}, time.Time{}, "", false, nil
+	}
+	if err != nil {
+		return SessionConfig{}, time.Time{}, "", false, fmt.Errorf("读取配对配置: %w", err)
+	}
+	var config SessionConfig
+	if err := json.Unmarshal([]byte(encoded), &config); err != nil {
+		return SessionConfig{}, time.Time{}, "", false, fmt.Errorf("解析配对配置: %w", err)
+	}
+	return cloneSessionConfig(config), fromMillis(createdAt), credentialID.String, true, nil
+}
+
+func (s *Store) RedeemCode(hash string, now time.Time) (SessionConfig, bool, error) {
 	config, _, _, ok, err := s.RedeemCodeWithCredential(hash, now)
 	return config, ok, err
 }
 
-func (s *Store) RedeemCodeDetails(hash string, now time.Time) (RescueConfig, time.Time, bool, error) {
+func (s *Store) RedeemCodeDetails(hash string, now time.Time) (SessionConfig, time.Time, bool, error) {
 	config, createdAt, _, ok, err := s.RedeemCodeWithCredential(hash, now)
 	return config, createdAt, ok, err
 }
 
-func (s *Store) RedeemCodeWithCredential(hash string, now time.Time) (RescueConfig, time.Time, string, bool, error) {
+func (s *Store) RedeemCodeWithCredential(hash string, now time.Time) (SessionConfig, time.Time, string, bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return RescueConfig{}, time.Time{}, "", false, err
+		return SessionConfig{}, time.Time{}, "", false, err
 	}
 	defer tx.Rollback()
 	result, err := tx.Exec(
@@ -513,11 +593,11 @@ func (s *Store) RedeemCodeWithCredential(hash string, now time.Time) (RescueConf
 		toMillis(now), hash, toMillis(now),
 	)
 	if err != nil {
-		return RescueConfig{}, time.Time{}, "", false, fmt.Errorf("消费配对代码: %w", err)
+		return SessionConfig{}, time.Time{}, "", false, fmt.Errorf("消费配对代码: %w", err)
 	}
 	count, err := result.RowsAffected()
 	if err != nil || count != 1 {
-		return RescueConfig{}, time.Time{}, "", false, err
+		return SessionConfig{}, time.Time{}, "", false, err
 	}
 	var createdAt int64
 	var encoded string
@@ -525,19 +605,99 @@ func (s *Store) RedeemCodeWithCredential(hash string, now time.Time) (RescueConf
 	if err := tx.QueryRow(
 		`SELECT created_at, config_json, credential_id FROM pairing_codes WHERE hash = ?`, hash,
 	).Scan(&createdAt, &encoded, &credentialID); err != nil {
-		return RescueConfig{}, time.Time{}, "", false, fmt.Errorf("读取配对配置: %w", err)
+		return SessionConfig{}, time.Time{}, "", false, fmt.Errorf("读取配对配置: %w", err)
 	}
-	var config RescueConfig
+	var config SessionConfig
 	if err := json.Unmarshal([]byte(encoded), &config); err != nil {
-		return RescueConfig{}, time.Time{}, "", false, fmt.Errorf("解析配对配置: %w", err)
+		return SessionConfig{}, time.Time{}, "", false, fmt.Errorf("解析配对配置: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return RescueConfig{}, time.Time{}, "", false, err
+		return SessionConfig{}, time.Time{}, "", false, err
 	}
-	return cloneRescueConfig(config), fromMillis(createdAt), credentialID.String, true, nil
+	return cloneSessionConfig(config), fromMillis(createdAt), credentialID.String, true, nil
 }
 
 func (s *Store) PutSession(session Session) error {
+	return insertSession(s.db, session)
+}
+
+func (s *Store) CreateSessionFromCode(
+	codeHash string,
+	now time.Time,
+	session Session,
+	idempotencyKeyHash string,
+	requestHash string,
+	responseCipher []byte,
+	replayExpiresAt time.Time,
+) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(
+		`UPDATE pairing_codes SET used_at = ?
+		 WHERE hash = ? AND used_at IS NULL AND expires_at > ?`,
+		toMillis(now), codeHash, toMillis(now),
+	)
+	if err != nil {
+		return false, fmt.Errorf("消费配对代码: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil || count != 1 {
+		return false, err
+	}
+	if err := insertSession(tx, session); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO session_start_replays(
+			idempotency_key_hash, request_hash, session_id, response_cipher, created_at, expires_at
+		) VALUES (?, ?, ?, ?, ?, ?)`,
+		idempotencyKeyHash, requestHash, session.ID, responseCipher,
+		toMillis(now), toMillis(replayExpiresAt),
+	); err != nil {
+		return false, fmt.Errorf("保存会话创建重放记录: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) GetSessionStartReplay(idempotencyKeyHash string) (SessionStartReplay, bool, error) {
+	var replay SessionStartReplay
+	var expiresAt int64
+	err := s.db.QueryRow(
+		`SELECT request_hash, session_id, response_cipher, expires_at
+		 FROM session_start_replays WHERE idempotency_key_hash = ?`,
+		idempotencyKeyHash,
+	).Scan(&replay.RequestHash, &replay.SessionID, &replay.Ciphertext, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionStartReplay{}, false, nil
+	}
+	if err != nil {
+		return SessionStartReplay{}, false, fmt.Errorf("读取会话创建重放记录: %w", err)
+	}
+	replay.ExpiresAt = fromMillis(expiresAt)
+	return replay, true, nil
+}
+
+func (s *Store) DeleteSessionStartReplay(sessionID string) error {
+	_, err := s.db.Exec(`DELETE FROM session_start_replays WHERE session_id = ?`, sessionID)
+	return err
+}
+
+func (s *Store) DeleteExpiredSessionStartReplays(now time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM session_start_replays WHERE expires_at <= ?`, toMillis(now))
+	return err
+}
+
+type sqlExecer interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+func insertSession(execer sqlExecer, session Session) error {
 	routes, wifiRoutes, config, err := encodeSessionJSON(session)
 	if err != nil {
 		return err
@@ -545,18 +705,26 @@ func (s *Store) PutSession(session Session) error {
 	if session.UpdatedAt.IsZero() {
 		session.UpdatedAt = session.CreatedAt
 	}
-	_, err = s.db.Exec(
+	if session.ConfigRevision <= 0 {
+		session.ConfigRevision = 1
+	}
+	_, err = execer.Exec(
 		`INSERT INTO sessions(
 			id, token_hash, credential_id, auth_key_id, provisioning_name, route, routes_json,
-			wifi_routes_json, config_json, device_id, created_at,
-			provisioning_deadline, expires_at, last_seen_at, heartbeat_deadline,
+			wifi_routes_json, config_json, config_revision, applied_config_revision,
+			device_id, created_at, provisioning_deadline, expires_at, last_seen_at, sync_deadline,
 			status, cleanup_error, cleanup_after, stopped_at, stop_reason, updated_at
-		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (
+			?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?,
+			?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?
+		)`,
 		session.ID, session.TokenHash, session.CredentialID, session.AuthKeyID, session.ProvisioningName,
-		session.Route, routes, wifiRoutes, config, session.DeviceID,
+		session.Route, routes, wifiRoutes, config, session.ConfigRevision,
+		session.AppliedConfigRevision, session.DeviceID,
 		toMillis(session.CreatedAt), nullableMillis(session.ProvisioningDeadline),
 		nullableMillis(session.ExpiresAt), nullableMillis(session.LastSeenAt),
-		nullableMillis(session.HeartbeatDeadline), session.Status, session.CleanupErr,
+		nullableMillis(session.SyncDeadline), session.Status, session.CleanupErr,
 		nullableMillis(session.CleanupAfter), nullableMillis(session.StoppedAt),
 		session.StopReason, toMillis(session.UpdatedAt),
 	)
@@ -577,13 +745,13 @@ func (s *Store) GetSession(id string) (Session, bool, error) {
 	return session, true, nil
 }
 
-func (s *Store) AttachDevice(id, deviceID string, now, heartbeatDeadline time.Time) (bool, error) {
+func (s *Store) AttachDevice(id, deviceID string, now, syncDeadline time.Time) (bool, error) {
 	result, err := s.db.Exec(
 		`UPDATE sessions
-		 SET device_id = ?, status = ?, last_seen_at = ?, heartbeat_deadline = ?,
+		 SET device_id = ?, status = ?, last_seen_at = ?, sync_deadline = ?,
 		     cleanup_error = '', cleanup_after = NULL, updated_at = ?
 		 WHERE id = ? AND status = ? AND device_id IS NULL`,
-		deviceID, SessionActive, toMillis(now), nullableMillis(heartbeatDeadline), toMillis(now),
+		deviceID, SessionActive, toMillis(now), nullableMillis(syncDeadline), toMillis(now),
 		id, SessionProvisioning,
 	)
 	if err != nil {
@@ -604,7 +772,7 @@ func (s *Store) AttachDevice(id, deviceID string, now, heartbeatDeadline time.Ti
 		return false, err
 	}
 	if session.Status == SessionActive && session.DeviceID == deviceID {
-		_, err := s.Heartbeat(id, now, heartbeatDeadline)
+		_, err := s.TouchSession(id, now, syncDeadline)
 		return err == nil, err
 	}
 	return false, nil
@@ -617,7 +785,7 @@ func isUniqueConstraintError(err error) bool {
 func (s *Store) DetachDevice(id, deviceID string, now time.Time) error {
 	_, err := s.db.Exec(
 		`UPDATE sessions
-		 SET device_id = NULL, status = ?, last_seen_at = NULL, heartbeat_deadline = NULL,
+		 SET device_id = NULL, status = ?, last_seen_at = NULL, sync_deadline = NULL,
 		     updated_at = ?
 		 WHERE id = ? AND device_id = ? AND status = ?`,
 		SessionProvisioning, toMillis(now), id, deviceID, SessionActive,
@@ -625,14 +793,29 @@ func (s *Store) DetachDevice(id, deviceID string, now time.Time) error {
 	return err
 }
 
-func (s *Store) Heartbeat(id string, now, deadline time.Time) (bool, error) {
+func (s *Store) TouchSession(id string, now, deadline time.Time) (bool, error) {
 	result, err := s.db.Exec(
-		`UPDATE sessions SET last_seen_at = ?, heartbeat_deadline = ?, updated_at = ?
+		`UPDATE sessions SET last_seen_at = ?, sync_deadline = ?, updated_at = ?
 		 WHERE id = ? AND status = ?`,
 		toMillis(now), nullableMillis(deadline), toMillis(now), id, SessionActive,
 	)
 	if err != nil {
-		return false, fmt.Errorf("记录心跳: %w", err)
+		return false, fmt.Errorf("记录会话同步: %w", err)
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) SyncSession(id string, now, deadline time.Time, appliedRevision int64) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE sessions
+		 SET last_seen_at = ?, sync_deadline = ?, applied_config_revision = ?, updated_at = ?
+		 WHERE id = ? AND status = ? AND config_revision >= ?`,
+		toMillis(now), nullableMillis(deadline), appliedRevision, toMillis(now),
+		id, SessionActive, appliedRevision,
+	)
+	if err != nil {
+		return false, fmt.Errorf("同步会话状态: %w", err)
 	}
 	count, err := result.RowsAffected()
 	return count == 1, err
@@ -705,7 +888,7 @@ func (s *Store) ReapableSessions(now time.Time) ([]Session, error) {
 		 (status = ? AND provisioning_deadline IS NOT NULL AND provisioning_deadline <= ?)
 		 OR (status = ? AND (
 		     (expires_at IS NOT NULL AND expires_at <= ?)
-		     OR (heartbeat_deadline IS NOT NULL AND heartbeat_deadline <= ?
+			     OR (sync_deadline IS NOT NULL AND sync_deadline <= ?
 		         AND COALESCE(json_extract(config_json, '$.exitPolicy.onAppClose'), 0) = 1)
 		 ))
 		 OR (status = ? AND (cleanup_after IS NULL OR cleanup_after <= ?))
@@ -753,8 +936,8 @@ func (s *Store) ListSessions(limit int) ([]Session, error) {
 
 const sessionSelect = `SELECT
 	id, token_hash, COALESCE(credential_id, ''), auth_key_id, provisioning_name, route, routes_json,
-	wifi_routes_json, config_json, COALESCE(device_id, ''), created_at,
-	provisioning_deadline, expires_at, last_seen_at, heartbeat_deadline,
+	wifi_routes_json, config_json, config_revision, applied_config_revision,
+	COALESCE(device_id, ''), created_at, provisioning_deadline, expires_at, last_seen_at, sync_deadline,
 	status, cleanup_error, cleanup_after, stopped_at, stop_reason, updated_at
 	FROM sessions`
 
@@ -765,13 +948,14 @@ type rowScanner interface {
 func scanSession(scanner rowScanner) (Session, error) {
 	var session Session
 	var routes, wifiRoutes, config string
-	var provisioningDeadline, expiresAt, lastSeenAt, heartbeatDeadline sql.NullInt64
+	var provisioningDeadline, expiresAt, lastSeenAt, syncDeadline sql.NullInt64
 	var cleanupAfter, stoppedAt sql.NullInt64
 	var createdAt, updatedAt int64
 	err := scanner.Scan(
 		&session.ID, &session.TokenHash, &session.CredentialID, &session.AuthKeyID, &session.ProvisioningName,
-		&session.Route, &routes, &wifiRoutes, &config, &session.DeviceID, &createdAt,
-		&provisioningDeadline, &expiresAt, &lastSeenAt, &heartbeatDeadline,
+		&session.Route, &routes, &wifiRoutes, &config, &session.ConfigRevision,
+		&session.AppliedConfigRevision, &session.DeviceID, &createdAt,
+		&provisioningDeadline, &expiresAt, &lastSeenAt, &syncDeadline,
 		&session.Status, &session.CleanupErr, &cleanupAfter, &stoppedAt,
 		&session.StopReason, &updatedAt,
 	)
@@ -787,11 +971,14 @@ func scanSession(scanner rowScanner) (Session, error) {
 	if err := json.Unmarshal([]byte(config), &session.Config); err != nil {
 		return Session{}, err
 	}
+	session.Routes = append([]string{}, session.Routes...)
+	session.WiFiRoutes = append([]string{}, session.WiFiRoutes...)
+	session.Config = cloneSessionConfig(session.Config)
 	session.CreatedAt = fromMillis(createdAt)
 	session.ProvisioningDeadline = fromNullableMillis(provisioningDeadline)
 	session.ExpiresAt = fromNullableMillis(expiresAt)
 	session.LastSeenAt = fromNullableMillis(lastSeenAt)
-	session.HeartbeatDeadline = fromNullableMillis(heartbeatDeadline)
+	session.SyncDeadline = fromNullableMillis(syncDeadline)
 	session.CleanupAfter = fromNullableMillis(cleanupAfter)
 	session.StoppedAt = fromNullableMillis(stoppedAt)
 	session.UpdatedAt = fromMillis(updatedAt)
@@ -807,7 +994,7 @@ func encodeSessionJSON(session Session) (string, string, string, error) {
 	if err != nil {
 		return "", "", "", err
 	}
-	config, err := json.Marshal(cloneRescueConfig(session.Config))
+	config, err := json.Marshal(cloneSessionConfig(session.Config))
 	if err != nil {
 		return "", "", "", err
 	}
@@ -820,8 +1007,8 @@ func (s Session) reapable(now time.Time) bool {
 		return !s.ProvisioningDeadline.IsZero() && !now.Before(s.ProvisioningDeadline)
 	case SessionActive:
 		return (!s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt)) ||
-			(s.Config.ExitPolicy.OnAppClose && !s.HeartbeatDeadline.IsZero() &&
-				!now.Before(s.HeartbeatDeadline))
+			(s.Config.ExitPolicy.OnAppClose && !s.SyncDeadline.IsZero() &&
+				!now.Before(s.SyncDeadline))
 	case SessionCleanupFailed:
 		return s.CleanupAfter.IsZero() || !now.Before(s.CleanupAfter)
 	default:
@@ -839,10 +1026,10 @@ func (s Session) reapReason(now time.Time) string {
 	if !s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt) {
 		return "expired"
 	}
-	return "heartbeat_timeout"
+	return "sync_timeout"
 }
 
-func cloneRescueConfig(config RescueConfig) RescueConfig {
+func cloneSessionConfig(config SessionConfig) SessionConfig {
 	if config.AdvertiseRoutes == nil {
 		config.AdvertiseRoutes = []string{}
 	} else {

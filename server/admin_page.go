@@ -16,12 +16,12 @@ var adminMark []byte
 
 func (s *Service) serveAdminPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	nonceBytes := make([]byte, 18)
 	if _, err := rand.Read(nonceBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "生成页面安全参数失败")
+		writeError(w, http.StatusInternalServerError, "admin_page_failed", "生成页面安全参数失败")
 		return
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
@@ -37,7 +37,7 @@ func (s *Service) serveAdminPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) serveAdminMark(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "方法不支持")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")

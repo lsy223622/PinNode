@@ -30,7 +30,7 @@ go run .
 
 默认数据库为 `data/pinnode.db`。相对路径按服务端进程的当前工作目录解析，因此应从
 `server` 目录启动，或在服务部署中使用绝对路径。`PINNODE_DATABASE_PATH` 可修改位置；SQLite 会保存
-配对记录、全部历史会话、auth key ID、唯一设备绑定、心跳租约和清理失败状态。管理员
+配对记录、全部历史会话、auth key ID、唯一设备绑定、同步租约和清理失败状态。管理员
 可用 `GET /v1/sessions?limit=100` 查询不含令牌摘要的历史记录。
 
 反向代理应追加 `X-Forwarded-For`，并把代理自身地址或网段写入
@@ -78,9 +78,10 @@ App Connector 和 Netfilter 等偏好。
 供应后创建、hostname 匹配、带目标 tag 且非 ephemeral 的设备，并把 node ID 以数据库
 唯一约束绑定到会话，再启用精确路由。绑定成功后 Android 恢复管理员要求的 hostname。
 
-未配置退出策略时，会话 `expiresAt` 为空，也不建立心跳租约。只有启用
-`exitPolicy.onAppClose` 时，Android 才按服务端下发的间隔发送心跳；超过
-`PINNODE_HEARTBEAT_TTL`（默认五分钟）后，服务端撤销路由并删除设备，用于兜底进程
+未配置退出策略时，会话 `expiresAt` 为 `null`，也不建立清理租约。所有活动会话都按
+服务端下发的间隔调用 revisioned `sync`，以确认已应用配置并接收后续完整配置快照。
+只有启用 `exitPolicy.onAppClose` 时，同一个同步请求才续期租约；超过
+`PINNODE_SYNC_LEASE_TTL`（默认五分钟）后，服务端撤销路由并删除设备，用于兜底进程
 被直接终止、无法送达关闭回调的场景。
 可配置：
 
@@ -102,4 +103,5 @@ tag 限制的 OAuth client。数据库备份和 `pinnode.secret`/`PINNODE_INSTAN
 保护，任何一方单独泄露都不应足以还原凭据。POSIX 首次创建使用 `0600`；Windows 部署
 还应确保服务账号对密钥目录拥有独占 ACL。
 
-接口和安全边界见 `../docs/architecture.md` 与 `../docs/threat-model.md`。
+接口契约见 `../docs/api.md` 与 `../docs/openapi.yaml`，安全边界见
+`../docs/architecture.md` 与 `../docs/threat-model.md`。

@@ -20,6 +20,7 @@ import java.net.URI
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -187,8 +188,11 @@ class RescueSessionManager(private val app: App) {
     const val PREFS_NAME = "pinnode"
     const val KEY_SERVER_URL = "server_url"
     const val KEY_ACTIVE_SESSION = "pinnode_active_session"
+    const val KEY_PENDING_SESSION_START = "pinnode_pending_session_start"
     const val KEY_PENDING_CLEANUP = "pinnode_pending_cleanup"
     const val KEY_PENDING_CLEANUPS = "pinnode_pending_cleanups"
+    const val PROTOCOL_VERSION = 1
+    const val SESSION_SYNC_FEATURE = "session-sync-v1"
 
     fun netfilterModeValue(value: String): Int? =
         when (value) {
@@ -208,6 +212,13 @@ class RescueSessionManager(private val app: App) {
   )
 
   @Serializable
+  private data class ApiMeta(
+      val apiVersion: String,
+      val protocolVersion: Int,
+      val features: List<String>,
+  )
+
+  @Serializable
   private data class ExitPolicy(
       val onAppClose: Boolean = false,
       val networkChange: String = "",
@@ -217,7 +228,7 @@ class RescueSessionManager(private val app: App) {
   )
 
   @Serializable
-  private data class RescueConfig(
+  private data class SessionConfig(
       val networkMode: String = "default",
       val vpnEnabled: Boolean = true,
       val acceptRoutes: Boolean = true,
@@ -247,16 +258,19 @@ class RescueSessionManager(private val app: App) {
 
   @Serializable
   private data class StartResponse(
+      val protocolVersion: Int,
+      val serverFeatures: List<String>,
       val sessionId: String,
       val sessionToken: String,
       val authKey: String,
       val provisioningHostname: String,
-      val heartbeatIntervalSeconds: Long = 0,
+      val configRevision: Long,
+      val syncIntervalSeconds: Long,
       val gatewayRoute: String,
-      val routes: List<String> = emptyList(),
-      val wifiRoutes: List<String> = emptyList(),
-      val config: RescueConfig = RescueConfig(),
-      val expiresAt: String = "",
+      val routes: List<String>,
+      val wifiRoutes: List<String>,
+      val config: SessionConfig,
+      val expiresAt: String?,
   )
 
   @Serializable private data class AttachDeviceRequest(val nodeId: String)
@@ -268,21 +282,77 @@ class RescueSessionManager(private val app: App) {
       val route: String = "",
       val routes: List<String> = emptyList(),
       val wifiRoutes: List<String> = emptyList(),
-      val config: RescueConfig = RescueConfig(),
-      val expiresAt: String = "",
+      val config: SessionConfig = SessionConfig(),
+      val expiresAt: String? = null,
       val serverUrl: String = "",
       val attached: Boolean = true,
-      val heartbeatIntervalSeconds: Long = 0,
+      val configRevision: Long = 1,
+      val syncIntervalSeconds: Long = 60,
+  )
+
+  @Serializable
+  private data class PendingSessionStart(
+      val code: String,
+      val gatewayRoute: String,
+      val wifiSubnetRoute: String,
+      val serverUrl: String,
+      val idempotencyKey: String,
+  )
+
+  @Serializable
+  private data class SessionSyncRequest(
+      val protocolVersion: Int = PROTOCOL_VERSION,
+      val appliedConfigRevision: Long,
+      val clientVersion: String = BuildConfig.VERSION_NAME,
+      val clientCapabilities: List<String> = listOf(SESSION_SYNC_FEATURE),
+  )
+
+  @Serializable
+  private data class SessionConfigSnapshot(
+      val revision: Long,
+      val config: SessionConfig,
+      val gatewayRoute: String,
+      val routes: List<String>,
+      val wifiRoutes: List<String>,
+      val expiresAt: String?,
+  )
+
+  @Serializable
+  private data class SessionSyncResponse(
+      val protocolVersion: Int,
+      val serverFeatures: List<String>,
+      val status: String,
+      val nextSyncAfterSeconds: Long,
+      val desiredConfig: SessionConfigSnapshot?,
+  )
+
+  @Serializable
+  private data class ApiErrorBody(
+      val code: String = "",
+      val message: String = "",
+      val retryable: Boolean = false,
+  )
+
+  @Serializable
+  private data class ApiErrorEnvelope(
+      val error: ApiErrorBody = ApiErrorBody(),
+      val requestId: String = "",
   )
 
   @Serializable
   private data class PendingCleanupQueue(val sessions: List<ActiveSession> = emptyList())
 
-  internal class RescueServerHttpException(val status: Int) : IOException()
+  internal class PinNodeApiException(
+      val status: Int,
+      val code: String = "",
+      val retryable: Boolean = false,
+      val requestId: String = "",
+      message: String = "",
+  ) : IOException(message)
 
-  internal class RescueInvalidCodeException : IOException()
+  internal class InvalidPairingCodeException : IOException()
 
-  internal class RescueConfigurationException(message: String) : IOException(message)
+  internal class PinNodeApiConfigurationException(message: String) : IOException(message)
 
   internal class RescueVpnPermissionException : IOException()
 
@@ -293,7 +363,7 @@ class RescueSessionManager(private val app: App) {
   private val sessionPrefs = app.getEncryptedPrefs()
   private var activeSession: ActiveSession? = null
   private var timedExitJob: Job? = null
-  private var heartbeatJob: Job? = null
+  private var syncJob: Job? = null
   private var sessionStateJob: Job? = null
   private val _sessionState = MutableStateFlow(RescueSessionState())
   val sessionState: StateFlow<RescueSessionState> = _sessionState.asStateFlow()
@@ -336,7 +406,7 @@ class RescueSessionManager(private val app: App) {
           return@withLock Result.failure(IllegalStateException("临时会话已经运行"))
         }
         if (!Regex("^[0-9]{6}$").matches(code)) {
-          return@withLock Result.failure(RescueInvalidCodeException())
+          return@withLock Result.failure(InvalidPairingCodeException())
         }
         val route = app.currentWifiGatewayRoute().orEmpty()
         val wifiSubnetRoute = app.currentWifiSubnetRoute().orEmpty()
@@ -347,28 +417,38 @@ class RescueSessionManager(private val app: App) {
 
         val previousNodeID = Notifier.netmap.value?.SelfNode?.StableID
         var pending: ActiveSession? = null
+        val startRequest = StartRequest(code, route, wifiSubnetRoute)
+        val pendingStart = pendingSessionStart(startRequest, serverUrl)
         try {
+          validateApiCompatibility(getJson<ApiMeta>("v1/meta", null, serverUrl))
           val response =
               postJson<StartResponse, StartRequest>(
                   "v1/sessions",
-                  StartRequest(code, route, wifiSubnetRoute),
+                  startRequest,
                   null,
                   serverUrl,
+                  pendingStart.idempotencyKey,
               )
+          validateApiCompatibility(response.protocolVersion, response.serverFeatures)
+          if (response.configRevision < 1 || response.syncIntervalSeconds < 1) {
+            throw PinNodeApiConfigurationException("服务器返回了无效的会话同步配置。")
+          }
           pending =
               ActiveSession(
-                  response.sessionId,
-                  response.sessionToken,
-                  response.gatewayRoute,
-                  response.routes,
-                  response.wifiRoutes,
-                  response.config,
-                  response.expiresAt,
-                  serverUrl,
-                  false,
-                  response.heartbeatIntervalSeconds,
+                  id = response.sessionId,
+                  token = response.sessionToken,
+                  route = response.gatewayRoute,
+                  routes = response.routes,
+                  wifiRoutes = response.wifiRoutes,
+                  config = response.config,
+                  expiresAt = response.expiresAt,
+                  serverUrl = serverUrl,
+                  attached = false,
+                  configRevision = response.configRevision,
+                  syncIntervalSeconds = response.syncIntervalSeconds,
               )
           persistSession(pending)
+          clearPendingSessionStart()
           app.setRescueRoutes(response.wifiRoutes)
           app.setRescueMode(response.config.networkMode == "cellular")
           loginWithAuthKey(
@@ -385,9 +465,13 @@ class RescueSessionManager(private val app: App) {
           persistSession(pending)
           startSessionStateMonitor(pending)
           scheduleTimedExit(pending)
-          startHeartbeat(pending)
+          startSync(pending)
           Result.success(route)
         } catch (error: Throwable) {
+          if ((error is PinNodeApiException && !error.retryable) ||
+              error is PinNodeApiConfigurationException) {
+            clearPendingSessionStart()
+          }
           TSLog.e(TAG, "启动临时会话失败: ${error::class.simpleName}")
           runCatching { clearManagedNode() }
               .onFailure { cleanupError ->
@@ -431,8 +515,8 @@ class RescueSessionManager(private val app: App) {
       activeSession = null
       timedExitJob?.cancel()
       timedExitJob = null
-      heartbeatJob?.cancel()
-      heartbeatJob = null
+      syncJob?.cancel()
+      syncJob = null
       clearPersistedSession()
       app.setRescueRoutes(null)
       app.setRescueMode(false)
@@ -459,8 +543,8 @@ class RescueSessionManager(private val app: App) {
     activeSession = null
     timedExitJob?.cancel()
     timedExitJob = null
-    heartbeatJob?.cancel()
-    heartbeatJob = null
+    syncJob?.cancel()
+    syncJob = null
     clearPersistedSession()
     stopSessionStateMonitor()
     _sessionState.value = RescueSessionState()
@@ -490,7 +574,7 @@ class RescueSessionManager(private val app: App) {
           session.token,
           session.serverUrl.ifBlank { configuredServerUrl() },
       )
-    } catch (error: RescueServerHttpException) {
+    } catch (error: PinNodeApiException) {
       if (error.status !in setOf(404, 410)) throw error
     }
   }
@@ -533,7 +617,7 @@ class RescueSessionManager(private val app: App) {
     app.setRescueMode(restored.config.networkMode == "cellular")
     startSessionStateMonitor(restored)
     scheduleTimedExit(restored)
-    startHeartbeat(restored)
+    startSync(restored)
     if (restored.config.vpnEnabled && VpnService.prepare(app) == null) {
       app.startVPN()
     }
@@ -546,6 +630,45 @@ class RescueSessionManager(private val app: App) {
 
   private fun clearPersistedSession() {
     sessionPrefs.edit(commit = true) { remove(KEY_ACTIVE_SESSION) }
+  }
+
+  private fun pendingSessionStart(
+      request: StartRequest,
+      serverUrl: String,
+  ): PendingSessionStart {
+    synchronized(sessionPrefs) {
+      val existing =
+          sessionPrefs.getString(KEY_PENDING_SESSION_START, null)?.let { encoded ->
+            runCatching { json.decodeFromString(PendingSessionStart.serializer(), encoded) }
+                .getOrNull()
+          }
+      if (existing != null &&
+          existing.code == request.code &&
+          existing.gatewayRoute == request.gatewayRoute &&
+          existing.wifiSubnetRoute == request.wifiSubnetRoute &&
+          existing.serverUrl == serverUrl) {
+        return existing
+      }
+      val created =
+          PendingSessionStart(
+              code = request.code,
+              gatewayRoute = request.gatewayRoute,
+              wifiSubnetRoute = request.wifiSubnetRoute,
+              serverUrl = serverUrl,
+              idempotencyKey = "android-${UUID.randomUUID()}",
+          )
+      sessionPrefs.edit(commit = true) {
+        putString(
+            KEY_PENDING_SESSION_START,
+            json.encodeToString(PendingSessionStart.serializer(), created),
+        )
+      }
+      return created
+    }
+  }
+
+  private fun clearPendingSessionStart() {
+    sessionPrefs.edit(commit = true) { remove(KEY_PENDING_SESSION_START) }
   }
 
   private fun persistPendingCleanup(session: ActiveSession) {
@@ -654,13 +777,14 @@ class RescueSessionManager(private val app: App) {
         effectiveExitNodeSelector = exitObservation.effectiveSelector,
         advertiseExitNodeStatus =
             observeRescueAdvertiseExitNode(config.advertiseExitNode, backendState, prefs, netmap),
-        logoutAt = session.expiresAt.ifBlank { null },
+        logoutAt = session.expiresAt?.ifBlank { null },
     )
   }
 
   private fun scheduleTimedExit(session: ActiveSession) {
     timedExitJob?.cancel()
-    val logoutAt = runCatching { Instant.parse(session.expiresAt) }.getOrNull() ?: return
+    val expiresAt = session.expiresAt?.takeIf(String::isNotBlank) ?: return
+    val logoutAt = runCatching { Instant.parse(expiresAt) }.getOrNull() ?: return
     timedExitJob =
         app.applicationScope.launch {
           delay((logoutAt.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0))
@@ -669,32 +793,78 @@ class RescueSessionManager(private val app: App) {
         }
   }
 
-  private fun startHeartbeat(session: ActiveSession) {
-    heartbeatJob?.cancel()
-    heartbeatJob = null
-    if (!session.config.exitPolicy.onAppClose || session.heartbeatIntervalSeconds <= 0) return
-    val intervalSeconds = session.heartbeatIntervalSeconds.coerceIn(30, 300)
-    heartbeatJob =
+  private fun startSync(session: ActiveSession) {
+    syncJob?.cancel()
+    syncJob = null
+    var intervalSeconds = session.syncIntervalSeconds.coerceIn(15, 300)
+    syncJob =
         app.applicationScope.launch {
           while (activeSession?.id == session.id) {
             delay(TimeUnit.SECONDS.toMillis(intervalSeconds))
-            if (activeSession?.id != session.id) return@launch
-            runCatching {
-                  postEmpty<Unit>(
-                      "v1/sessions/${session.id}/heartbeat",
-                      session.token,
-                      session.serverUrl.ifBlank { configuredServerUrl() },
+            val current = activeSession?.takeIf { it.id == session.id } ?: return@launch
+            try {
+              val response =
+                  postJson<SessionSyncResponse, SessionSyncRequest>(
+                      "v1/sessions/${current.id}/sync",
+                      SessionSyncRequest(appliedConfigRevision = current.configRevision),
+                      current.token,
+                      current.serverUrl.ifBlank { configuredServerUrl() },
                   )
+              validateApiCompatibility(response.protocolVersion, response.serverFeatures)
+              if (response.status != "active" || response.nextSyncAfterSeconds < 1) {
+                throw PinNodeApiConfigurationException("服务器返回了无效的会话同步状态。")
+              }
+              response.desiredConfig?.let { desired ->
+                mutex.withLock {
+                  val latest = activeSession?.takeIf { it.id == current.id } ?: return@withLock
+                  applyDesiredConfig(latest, desired)
                 }
-                .onFailure { error ->
-                  if (error is RescueServerHttpException && error.status in setOf(404, 409, 410)) {
-                    stop()
-                    return@launch
-                  }
-                  TSLog.e(TAG, "PinNode 心跳失败: ${error::class.simpleName}")
-                }
+              }
+              intervalSeconds = response.nextSyncAfterSeconds.coerceIn(15, 300)
+            } catch (error: Throwable) {
+              if (error is PinNodeApiException && error.status in setOf(404, 409, 410)) {
+                app.applicationScope.launch { stop() }
+                return@launch
+              }
+              TSLog.e(TAG, "PinNode 会话同步失败: ${error::class.simpleName}")
+            }
           }
         }
+  }
+
+  private suspend fun applyDesiredConfig(
+      session: ActiveSession,
+      desired: SessionConfigSnapshot,
+  ) {
+    if (desired.revision <= session.configRevision) return
+    if (desired.revision < 1) {
+      throw PinNodeApiConfigurationException("服务器返回了无效的配置 revision。")
+    }
+    if (desired.config.vpnEnabled && !session.config.vpnEnabled) {
+      ensureVpnPermission()
+      app.startForegroundForLogin()
+    }
+    app.setRescueRoutes(desired.wifiRoutes)
+    app.setRescueMode(desired.config.networkMode == "cellular")
+    applyConfig(Client(app.applicationScope), desired.config, desired.routes)
+    if (desired.config.vpnEnabled && !session.config.vpnEnabled) {
+      app.startVPN()
+    } else if (!desired.config.vpnEnabled && session.config.vpnEnabled) {
+      app.stopVPN()
+    }
+    val updated =
+        session.copy(
+            route = desired.gatewayRoute,
+            routes = desired.routes,
+            wifiRoutes = desired.wifiRoutes,
+            config = desired.config,
+            expiresAt = desired.expiresAt,
+            configRevision = desired.revision,
+        )
+    activeSession = updated
+    persistSession(updated)
+    startSessionStateMonitor(updated)
+    scheduleTimedExit(updated)
   }
 
   private fun monitorNetworkExitPolicy() {
@@ -721,7 +891,7 @@ class RescueSessionManager(private val app: App) {
 
   private suspend fun loginWithAuthKey(
       authKey: String,
-      config: RescueConfig,
+      config: SessionConfig,
       routes: List<String>,
       hostname: String,
   ) {
@@ -784,7 +954,7 @@ class RescueSessionManager(private val app: App) {
 
   private fun applyConfigToPrefs(
       prefs: Ipn.Prefs,
-      config: RescueConfig,
+      config: SessionConfig,
       routes: List<String>,
       hostname: String = config.hostname,
   ) {
@@ -810,7 +980,7 @@ class RescueSessionManager(private val app: App) {
 
   private suspend fun applyConfig(
       client: Client,
-      config: RescueConfig,
+      config: SessionConfig,
       routes: List<String>,
       hostname: String = config.hostname,
   ) {
@@ -862,7 +1032,7 @@ class RescueSessionManager(private val app: App) {
               session.serverUrl.ifBlank { configuredServerUrl() },
           )
           return@withTimeout
-        } catch (error: RescueServerHttpException) {
+        } catch (error: PinNodeApiException) {
           if (error.status !in setOf(409, 429, 502)) throw error
           delay(2_000)
         }
@@ -875,6 +1045,7 @@ class RescueSessionManager(private val app: App) {
       body: B,
       token: String?,
       baseUrl: String = configuredServerUrl(),
+      idempotencyKey: String? = null,
   ): T =
       withContext(Dispatchers.IO) {
         val operation = diagnosticOperation(path)
@@ -886,6 +1057,7 @@ class RescueSessionManager(private val app: App) {
           connection.doInput = true
           connection.connectTimeout = REQUEST_TIMEOUT_MS
           connection.readTimeout = REQUEST_TIMEOUT_MS
+          idempotencyKey?.let { connection.setRequestProperty("Idempotency-Key", it) }
           if (body != null) {
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
@@ -898,7 +1070,7 @@ class RescueSessionManager(private val app: App) {
           val status = connection.responseCode
           debugRequest(operation, "response status=$status elapsedMs=${elapsedMillis(startedAt)}")
           if (status !in 200..299) {
-            throw RescueServerHttpException(status)
+            throw apiException(connection, status)
           }
           if (T::class == Unit::class) {
             @Suppress("UNCHECKED_CAST") return@withContext Unit as T
@@ -935,7 +1107,7 @@ class RescueSessionManager(private val app: App) {
           val status = connection.responseCode
           debugRequest(operation, "response status=$status elapsedMs=${elapsedMillis(startedAt)}")
           if (status !in 200..299) {
-            throw RescueServerHttpException(status)
+            throw apiException(connection, status)
           }
           @Suppress("UNCHECKED_CAST") return@withContext Unit as T
         } catch (error: Throwable) {
@@ -949,11 +1121,70 @@ class RescueSessionManager(private val app: App) {
         }
       }
 
+  private suspend inline fun <reified T> getJson(
+      path: String,
+      token: String?,
+      baseUrl: String = configuredServerUrl(),
+  ): T =
+      withContext(Dispatchers.IO) {
+        val operation = diagnosticOperation(path)
+        val startedAt = System.nanoTime()
+        val connection = openConnection(path, token, baseUrl)
+        debugRequest(operation, "opened host=${connection.url.host}")
+        try {
+          connection.requestMethod = "GET"
+          connection.doInput = true
+          connection.connectTimeout = REQUEST_TIMEOUT_MS
+          connection.readTimeout = REQUEST_TIMEOUT_MS
+          val status = connection.responseCode
+          debugRequest(operation, "response status=$status elapsedMs=${elapsedMillis(startedAt)}")
+          if (status !in 200..299) {
+            throw apiException(connection, status)
+          }
+          connection.inputStream.use { stream ->
+            json.decodeFromString<T>(stream.readBytes().toString(StandardCharsets.UTF_8))
+          }
+        } finally {
+          connection.disconnect()
+        }
+      }
+
+  private fun apiException(connection: HttpURLConnection, status: Int): PinNodeApiException {
+    val payload =
+        connection.errorStream?.use { stream ->
+          val body = stream.readBytes().toString(StandardCharsets.UTF_8)
+          runCatching { json.decodeFromString(ApiErrorEnvelope.serializer(), body) }.getOrNull()
+        }
+    return PinNodeApiException(
+        status = status,
+        code = payload?.error?.code.orEmpty(),
+        retryable = payload?.error?.retryable ?: (status == 429 || status >= 500),
+        requestId =
+            payload?.requestId?.ifBlank { null }
+                ?: connection.getHeaderField("X-Request-ID").orEmpty(),
+        message = payload?.error?.message.orEmpty(),
+    )
+  }
+
+  private fun validateApiCompatibility(meta: ApiMeta) {
+    if (meta.apiVersion != "v1") {
+      throw PinNodeApiConfigurationException("服务器不是受支持的 PinNode API v1。")
+    }
+    validateApiCompatibility(meta.protocolVersion, meta.features)
+  }
+
+  private fun validateApiCompatibility(protocol: Int, features: List<String>) {
+    if (protocol != PROTOCOL_VERSION || SESSION_SYNC_FEATURE !in features) {
+      throw PinNodeApiConfigurationException("服务器不支持此客户端所需的会话同步协议。")
+    }
+  }
+
   private fun diagnosticOperation(path: String): String =
       when {
+        path == "v1/meta" -> "meta"
         path == "v1/sessions" -> "start"
         path.endsWith("/device") -> "attach"
-        path.endsWith("/heartbeat") -> "heartbeat"
+        path.endsWith("/sync") -> "sync"
         path.endsWith("/stop") -> "stop"
         else -> "unknown"
       }
@@ -979,22 +1210,22 @@ class RescueSessionManager(private val app: App) {
 
   private fun serverUrlValidationError(value: String): IOException? {
     if (value.isBlank()) {
-      return RescueConfigurationException("尚未配置 PinNode 配置服务器：请填写服务器 API 地址，或安装由管理员锁定服务器的正式包。")
+      return PinNodeApiConfigurationException("尚未配置 PinNode 配置服务器：请填写服务器 API 地址，或安装由管理员锁定服务器的正式包。")
     }
     val uri =
         try {
           URI(value)
         } catch (error: Exception) {
-          return RescueConfigurationException("配置服务器地址格式无效：请填写完整的 https:// 地址。")
+          return PinNodeApiConfigurationException("配置服务器地址格式无效：请填写完整的 https:// 地址。")
         }
     if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) {
-      return RescueConfigurationException("配置服务器地址格式无效：请填写带主机名的 http(s) 地址。")
+      return PinNodeApiConfigurationException("配置服务器地址格式无效：请填写带主机名的 http(s) 地址。")
     }
     if (uri.scheme == "http" && !BuildConfig.DEBUG) {
-      return RescueConfigurationException("正式版只能使用 HTTPS 连接配置服务器：请检查地址和服务器证书。")
+      return PinNodeApiConfigurationException("正式版只能使用 HTTPS 连接配置服务器：请检查地址和服务器证书。")
     }
     if (uri.rawQuery != null || uri.rawFragment != null || uri.userInfo != null) {
-      return RescueConfigurationException("配置服务器地址不应包含查询参数、片段或用户信息：请只填写基础地址。")
+      return PinNodeApiConfigurationException("配置服务器地址不应包含查询参数、片段或用户信息：请只填写基础地址。")
     }
     return null
   }

@@ -105,6 +105,8 @@ PinNode 复用官方 backend 的 tailnet 数据面和 DNS/路由能力，但它�
 
 完整字段、安全边界和逐项证据见：
 
+- [`docs/api.md`](docs/api.md)
+- [`docs/openapi.yaml`](docs/openapi.yaml)
 - [`server/README.md`](server/README.md)
 - [`docs/architecture.md`](docs/architecture.md)
 - [`docs/known-limitations.md`](docs/known-limitations.md)

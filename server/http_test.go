@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ type fakeTailscale struct {
 	oauthCalls         int
 	oauthToken         OAuthAccessToken
 	oauthErr           error
+	createAuthKeyErr   error
 }
 
 func (f *fakeTailscale) ExchangeOAuthToken(context.Context, string, string) (OAuthAccessToken, error) {
@@ -45,9 +47,12 @@ func (f *fakeTailscale) ValidateCredential(context.Context, string) error { retu
 
 func (f *fakeTailscale) CreateAuthKey(_ context.Context, accessToken string, _ time.Duration, ephemeral bool) (AuthKey, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.createAuthKeyErr != nil {
+		return AuthKey{}, f.createAuthKeyErr
+	}
 	f.ephemeralRequested = append(f.ephemeralRequested, ephemeral)
 	f.accessTokens = append(f.accessTokens, accessToken)
-	f.mu.Unlock()
 	return AuthKey{Secret: "tskey-test", ID: "k-test"}, nil
 }
 
@@ -145,6 +150,18 @@ func authorizeTestAdmin(request *http.Request, authentication testAdminAuthentic
 	}
 }
 
+func newJSONRequest(method, target, body string) *http.Request {
+	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	return request
+}
+
+func newSessionStartRequest(body string) *http.Request {
+	request := newJSONRequest(http.MethodPost, "/v1/sessions", body)
+	request.Header.Set("Idempotency-Key", "unit-test-session-start-key")
+	return request
+}
+
 func TestSessionProvisionAndCleanup(t *testing.T) {
 	fake := &fakeTailscale{device: Device{NodeID: "n-test", Tags: []string{managedDeviceTag}}}
 	config := testServiceConfig()
@@ -152,10 +169,10 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 	service := NewService(config, store, fake, nil)
 	adminAuthentication, credentialID := installTestAdminAndCredential(t, service, store)
 
-	codeRequest := httptest.NewRequest(
+	codeRequest := newJSONRequest(
 		http.MethodPost,
 		"/v1/pairing-codes",
-		strings.NewReader(`{"credentialId":"`+credentialID+`","config":{"networkMode":"default","exitPolicy":{"onAppClose":true}}}`),
+		`{"credentialId":"`+credentialID+`","config":{"networkMode":"default","exitPolicy":{"onAppClose":true}}}`,
 	)
 	authorizeTestAdmin(codeRequest, adminAuthentication, true)
 	codeResponse := httptest.NewRecorder()
@@ -171,7 +188,7 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 	}
 
 	startBody := `{"code":"` + codeBody.Code + `","gatewayRoute":"192.168.1.1/32"}`
-	startRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(startBody))
+	startRequest := newSessionStartRequest(startBody)
 	startResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(startResponse, startRequest)
 	if startResponse.Code != http.StatusCreated {
@@ -182,7 +199,7 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 		SessionToken         string `json:"sessionToken"`
 		AuthKey              string `json:"authKey"`
 		ProvisioningHostname string `json:"provisioningHostname"`
-		HeartbeatSeconds     int64  `json:"heartbeatIntervalSeconds"`
+		SyncIntervalSeconds  int64  `json:"syncIntervalSeconds"`
 	}
 	if err := json.Unmarshal(startResponse.Body.Bytes(), &startResult); err != nil {
 		t.Fatal(err)
@@ -190,8 +207,8 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 	if startResult.SessionID == "" || startResult.SessionToken == "" || startResult.AuthKey != "tskey-test" {
 		t.Fatalf("会话响应缺少必要字段: %+v", startResult)
 	}
-	if startResult.HeartbeatSeconds <= 0 {
-		t.Fatalf("应用关闭会话没有启用心跳: %+v", startResult)
+	if startResult.SyncIntervalSeconds <= 0 {
+		t.Fatalf("会话没有下发同步间隔: %+v", startResult)
 	}
 	fake.mu.Lock()
 	fake.device.Hostname = startResult.ProvisioningHostname
@@ -209,21 +226,22 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 	fake.mu.Unlock()
 
 	attachBody := `{"nodeId":"n-test"}`
-	attachRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", strings.NewReader(attachBody))
+	attachRequest := newJSONRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", attachBody)
 	attachRequest.Header.Set("Authorization", "Bearer "+startResult.SessionToken)
 	attachResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(attachResponse, attachRequest)
 	if attachResponse.Code != http.StatusOK {
 		t.Fatalf("绑定设备返回 %d: %s", attachResponse.Code, attachResponse.Body.String())
 	}
-	heartbeatRequest := httptest.NewRequest(
-		http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/heartbeat", nil,
+	syncRequest := newJSONRequest(
+		http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/sync",
+		`{"protocolVersion":1,"appliedConfigRevision":1,"clientVersion":"test","clientCapabilities":["session-sync-v1"]}`,
 	)
-	heartbeatRequest.Header.Set("Authorization", "Bearer "+startResult.SessionToken)
-	heartbeatResponse := httptest.NewRecorder()
-	service.Handler().ServeHTTP(heartbeatResponse, heartbeatRequest)
-	if heartbeatResponse.Code != http.StatusOK {
-		t.Fatalf("会话心跳返回 %d: %s", heartbeatResponse.Code, heartbeatResponse.Body.String())
+	syncRequest.Header.Set("Authorization", "Bearer "+startResult.SessionToken)
+	syncResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(syncResponse, syncRequest)
+	if syncResponse.Code != http.StatusOK {
+		t.Fatalf("会话同步返回 %d: %s", syncResponse.Code, syncResponse.Body.String())
 	}
 
 	stopRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/stop", nil)
@@ -268,11 +286,7 @@ func TestAttachRejectsDeviceWithoutProvisioningChallenge(t *testing.T) {
 	adminAuthentication, credentialID := installTestAdminAndCredential(t, service, store)
 	code := createTestPairingCode(t, service, adminAuthentication, credentialID)
 
-	startRequest := httptest.NewRequest(
-		http.MethodPost,
-		"/v1/sessions",
-		strings.NewReader(`{"code":"`+code+`","gatewayRoute":"192.168.1.1/32"}`),
-	)
+	startRequest := newSessionStartRequest(`{"code":"` + code + `","gatewayRoute":"192.168.1.1/32"}`)
 	startResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(startResponse, startRequest)
 	if startResponse.Code != http.StatusCreated {
@@ -285,10 +299,10 @@ func TestAttachRejectsDeviceWithoutProvisioningChallenge(t *testing.T) {
 	if err := json.Unmarshal(startResponse.Body.Bytes(), &started); err != nil {
 		t.Fatal(err)
 	}
-	attachRequest := httptest.NewRequest(
+	attachRequest := newJSONRequest(
 		http.MethodPost,
 		"/v1/sessions/"+started.ID+"/device",
-		strings.NewReader(`{"nodeId":"n-existing"}`),
+		`{"nodeId":"n-existing"}`,
 	)
 	attachRequest.Header.Set("Authorization", "Bearer "+started.Token)
 	attachResponse := httptest.NewRecorder()
@@ -300,9 +314,9 @@ func TestAttachRejectsDeviceWithoutProvisioningChallenge(t *testing.T) {
 
 func createTestPairingCode(t *testing.T, service *Service, authentication testAdminAuthentication, credentialID string) string {
 	t.Helper()
-	request := httptest.NewRequest(
+	request := newJSONRequest(
 		http.MethodPost, "/v1/pairing-codes",
-		strings.NewReader(`{"credentialId":"`+credentialID+`"}`),
+		`{"credentialId":"`+credentialID+`"}`,
 	)
 	authorizeTestAdmin(request, authentication, true)
 	response := httptest.NewRecorder()
@@ -326,7 +340,7 @@ func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
 	service := NewService(config, store, fake, nil)
 	adminAuthentication, credentialID := installTestAdminAndCredential(t, service, store)
 
-	codeRequest := httptest.NewRequest(http.MethodPost, "/v1/pairing-codes", strings.NewReader(`{"credentialId":"`+credentialID+`","config":{"vpnEnabled":false,"acceptRoutes":false,"acceptDNS":false,"subnetRouter":true,"autoGatewayRoute":false,"advertiseRoutes":["192.168.1.0/24"]}}`))
+	codeRequest := newJSONRequest(http.MethodPost, "/v1/pairing-codes", `{"credentialId":"`+credentialID+`","config":{"vpnEnabled":false,"acceptRoutes":false,"acceptDNS":false,"subnetRouter":true,"autoGatewayRoute":false,"advertiseRoutes":["192.168.1.0/24"]}}`)
 	authorizeTestAdmin(codeRequest, adminAuthentication, true)
 	codeResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(codeResponse, codeRequest)
@@ -340,19 +354,19 @@ func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	startRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"code":"`+codeBody.Code+`","gatewayRoute":"192.168.1.1/32"}`))
+	startRequest := newSessionStartRequest(`{"code":"` + codeBody.Code + `","gatewayRoute":"192.168.1.1/32"}`)
 	startResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(startResponse, startRequest)
 	if startResponse.Code != http.StatusCreated {
 		t.Fatalf("带配置启动会话返回 %d: %s", startResponse.Code, startResponse.Body.String())
 	}
 	var startResult struct {
-		SessionID            string       `json:"sessionId"`
-		Token                string       `json:"sessionToken"`
-		Config               RescueConfig `json:"config"`
-		Routes               []string     `json:"routes"`
-		ProvisioningHostname string       `json:"provisioningHostname"`
-		HeartbeatSeconds     int64        `json:"heartbeatIntervalSeconds"`
+		SessionID            string        `json:"sessionId"`
+		Token                string        `json:"sessionToken"`
+		Config               SessionConfig `json:"config"`
+		Routes               []string      `json:"routes"`
+		ProvisioningHostname string        `json:"provisioningHostname"`
+		SyncIntervalSeconds  int64         `json:"syncIntervalSeconds"`
 	}
 	if err := json.Unmarshal(startResponse.Body.Bytes(), &startResult); err != nil {
 		t.Fatal(err)
@@ -363,38 +377,38 @@ func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
 	if len(startResult.Routes) != 1 || startResult.Routes[0] != "192.168.1.0/24" {
 		t.Fatalf("实际路由错误: %v", startResult.Routes)
 	}
-	if startResult.HeartbeatSeconds != 0 {
-		t.Fatalf("未启用应用关闭策略的会话不应下发心跳: %d", startResult.HeartbeatSeconds)
+	if startResult.SyncIntervalSeconds <= 0 {
+		t.Fatalf("长期会话也必须下发同步间隔: %d", startResult.SyncIntervalSeconds)
 	}
 	fake.mu.Lock()
 	fake.device.Hostname = startResult.ProvisioningHostname
 	fake.device.Created = time.Now()
 	fake.mu.Unlock()
 
-	attachRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", strings.NewReader(`{"nodeId":"n-configured"}`))
+	attachRequest := newJSONRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", `{"nodeId":"n-configured"}`)
 	attachRequest.Header.Set("Authorization", "Bearer "+startResult.Token)
 	attachResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(attachResponse, attachRequest)
 	if attachResponse.Code != http.StatusOK {
 		t.Fatalf("绑定配置设备返回 %d: %s", attachResponse.Code, attachResponse.Body.String())
 	}
-	retryRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", strings.NewReader(`{"nodeId":"n-configured"}`))
+	retryRequest := newJSONRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/device", `{"nodeId":"n-configured"}`)
 	retryRequest.Header.Set("Authorization", "Bearer "+startResult.Token)
 	retryResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(retryResponse, retryRequest)
 	if retryResponse.Code != http.StatusOK {
 		t.Fatalf("重复绑定设备返回 %d: %s", retryResponse.Code, retryResponse.Body.String())
 	}
-	heartbeatRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/heartbeat", nil)
-	heartbeatRequest.Header.Set("Authorization", "Bearer "+startResult.Token)
-	heartbeatResponse := httptest.NewRecorder()
-	service.Handler().ServeHTTP(heartbeatResponse, heartbeatRequest)
-	if heartbeatResponse.Code != http.StatusConflict {
-		t.Fatalf("长期会话错误接受心跳: %d %s", heartbeatResponse.Code, heartbeatResponse.Body.String())
+	syncRequest := newJSONRequest(http.MethodPost, "/v1/sessions/"+startResult.SessionID+"/sync", `{"protocolVersion":1,"appliedConfigRevision":1,"clientVersion":"test","clientCapabilities":["session-sync-v1"]}`)
+	syncRequest.Header.Set("Authorization", "Bearer "+startResult.Token)
+	syncResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(syncResponse, syncRequest)
+	if syncResponse.Code != http.StatusOK {
+		t.Fatalf("长期会话同步失败: %d %s", syncResponse.Code, syncResponse.Body.String())
 	}
 	stored, ok, err := store.GetSession(startResult.SessionID)
-	if err != nil || !ok || !stored.HeartbeatDeadline.IsZero() {
-		t.Fatalf("长期会话错误建立心跳租约: ok=%v deadline=%v err=%v", ok, stored.HeartbeatDeadline, err)
+	if err != nil || !ok || !stored.SyncDeadline.IsZero() {
+		t.Fatalf("长期会话错误建立同步租约: ok=%v deadline=%v err=%v", ok, stored.SyncDeadline, err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
@@ -444,11 +458,11 @@ func TestAdminPageIsEmbedded(t *testing.T) {
 
 func TestDiagnosticRouteRedactsSessionID(t *testing.T) {
 	for input, want := range map[string]string{
-		"/v1/sessions/secret-session/device":    "/v1/sessions/:id/device",
-		"/v1/sessions/secret-session/heartbeat": "/v1/sessions/:id/heartbeat",
-		"/v1/sessions/secret-session/stop":      "/v1/sessions/:id/stop",
-		"/v1/sessions/secret-session":           "/v1/sessions/:id",
-		"/healthz":                              "/healthz",
+		"/v1/sessions/secret-session/device": "/v1/sessions/:id/device",
+		"/v1/sessions/secret-session/sync":   "/v1/sessions/:id/sync",
+		"/v1/sessions/secret-session/stop":   "/v1/sessions/:id/stop",
+		"/v1/sessions/secret-session":        "/v1/sessions/:id",
+		"/healthz":                           "/healthz",
 	} {
 		if got := diagnosticRoute(input); got != want {
 			t.Errorf("diagnosticRoute(%q)=%q, want %q", input, got, want)
@@ -465,5 +479,141 @@ func TestDiagnosticIdentifierIsStableAndRedacted(t *testing.T) {
 	}
 	if first == diagnosticIdentifier("another-session-id") {
 		t.Fatal("different identifiers produced the same diagnostic reference")
+	}
+}
+
+func TestAPIMetaAndStructuredErrors(t *testing.T) {
+	service := NewService(testServiceConfig(), NewStore(), &fakeTailscale{}, nil)
+	metaRequest := httptest.NewRequest(http.MethodGet, "/v1/meta", nil)
+	metaResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(metaResponse, metaRequest)
+	if metaResponse.Code != http.StatusOK ||
+		!strings.Contains(metaResponse.Body.String(), `"protocolVersion":1`) ||
+		!strings.Contains(metaResponse.Body.String(), `"session-sync-v1"`) {
+		t.Fatalf("API meta 响应错误: %d %s", metaResponse.Code, metaResponse.Body.String())
+	}
+
+	invalidRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
+	invalidResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(invalidResponse, invalidRequest)
+	var envelope apiErrorResponse
+	if err := json.Unmarshal(invalidResponse.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if invalidResponse.Code != http.StatusUnsupportedMediaType ||
+		envelope.Error.Code != "content_type_invalid" || envelope.Error.Retryable ||
+		envelope.RequestID == "" || envelope.RequestID != invalidResponse.Header().Get("X-Request-ID") {
+		t.Fatalf("结构化错误响应错误: code=%d header=%q body=%s", invalidResponse.Code, invalidResponse.Header().Get("X-Request-ID"), invalidResponse.Body.String())
+	}
+}
+
+func TestJSONRequestsRejectUnknownTrailingAndOversizedBodies(t *testing.T) {
+	service := NewService(testServiceConfig(), NewStore(), &fakeTailscale{}, nil)
+	for name, body := range map[string]string{
+		"unknown":  `{"code":"123456","unknown":true}`,
+		"trailing": `{"code":"123456"}{}`,
+		"oversized": `{"code":"123456","gatewayRoute":"` +
+			strings.Repeat("x", maxJSONBodyBytes) + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := newSessionStartRequest(body)
+			response := httptest.NewRecorder()
+			service.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest ||
+				!strings.Contains(response.Body.String(), `"code":"json_invalid"`) {
+				t.Fatalf("严格 JSON 校验返回 %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestSessionStartIsIdempotent(t *testing.T) {
+	fake := &fakeTailscale{}
+	store := NewStore()
+	service := NewService(testServiceConfig(), store, fake, nil)
+	authentication, credentialID := installTestAdminAndCredential(t, service, store)
+	code := createTestPairingCode(t, service, authentication, credentialID)
+	body := `{"code":"` + code + `","gatewayRoute":"192.168.1.1/32"}`
+
+	firstRequest := newSessionStartRequest(body)
+	firstResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(firstResponse, firstRequest)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("首次创建会话返回 %d: %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	secondRequest := newSessionStartRequest(body)
+	secondResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(secondResponse, secondRequest)
+	if secondResponse.Code != http.StatusCreated || secondResponse.Header().Get("Idempotent-Replayed") != "true" ||
+		secondResponse.Body.String() != firstResponse.Body.String() {
+		t.Fatalf("幂等重放不一致: first=%s second=%s", firstResponse.Body.String(), secondResponse.Body.String())
+	}
+	fake.mu.Lock()
+	createdKeys := len(fake.ephemeralRequested)
+	fake.mu.Unlock()
+	if createdKeys != 1 {
+		t.Fatalf("幂等重放重复创建了 auth key: %d", createdKeys)
+	}
+
+	conflictRequest := newSessionStartRequest(`{"code":"` + code + `","gatewayRoute":"192.168.1.2/32"}`)
+	conflictResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(conflictResponse, conflictRequest)
+	if conflictResponse.Code != http.StatusConflict ||
+		!strings.Contains(conflictResponse.Body.String(), `"code":"idempotency_key_conflict"`) {
+		t.Fatalf("不同请求复用幂等键未被拒绝: %d %s", conflictResponse.Code, conflictResponse.Body.String())
+	}
+}
+
+func TestUpstreamFailureDoesNotConsumePairingCode(t *testing.T) {
+	fake := &fakeTailscale{createAuthKeyErr: errors.New("temporary upstream failure")}
+	store := NewStore()
+	service := NewService(testServiceConfig(), store, fake, nil)
+	authentication, credentialID := installTestAdminAndCredential(t, service, store)
+	code := createTestPairingCode(t, service, authentication, credentialID)
+	body := `{"code":"` + code + `","gatewayRoute":"192.168.1.1/32"}`
+
+	failedRequest := newSessionStartRequest(body)
+	failedResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(failedResponse, failedRequest)
+	if failedResponse.Code != http.StatusBadGateway {
+		t.Fatalf("上游失败返回 %d: %s", failedResponse.Code, failedResponse.Body.String())
+	}
+	fake.mu.Lock()
+	fake.createAuthKeyErr = nil
+	fake.mu.Unlock()
+	retryRequest := newSessionStartRequest(body)
+	retryResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(retryResponse, retryRequest)
+	if retryResponse.Code != http.StatusCreated {
+		t.Fatalf("上游恢复后同一 PIN 不能重试: %d %s", retryResponse.Code, retryResponse.Body.String())
+	}
+}
+
+func TestSessionSyncReturnsRevisionedConfig(t *testing.T) {
+	store := NewStore()
+	token, tokenHash, err := newSecretToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := DefaultSessionConfig()
+	config.NetworkMode = NetworkModeDefault
+	now := time.Now()
+	if err := store.PutSession(Session{
+		ID: "revisioned", TokenHash: tokenHash, ProvisioningName: "pinnode-revisioned",
+		Config: config, ConfigRevision: 2, AppliedConfigRevision: 1,
+		CreatedAt: now, Status: SessionActive, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(testServiceConfig(), store, &fakeTailscale{}, nil)
+	request := newJSONRequest(http.MethodPost, "/v1/sessions/revisioned/sync", `{"protocolVersion":1,"appliedConfigRevision":1,"clientVersion":"test","clientCapabilities":["session-sync-v1"]}`)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"desiredConfig":{"revision":2`) ||
+		!strings.Contains(response.Body.String(), `"syncDeadline":null`) ||
+		!strings.Contains(response.Body.String(), `"routes":[]`) {
+		t.Fatalf("revisioned sync 响应错误: %d %s", response.Code, response.Body.String())
 	}
 }

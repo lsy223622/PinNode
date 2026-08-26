@@ -35,14 +35,14 @@
 | C4 | `advertiseExitNode=true` | `routes` 增加 IPv4/IPv6 默认路由；默认路由不进 `wifiRoutes` | server test + 远程 peer | PASS（真机互联网转发） |
 | C5 | `useExitNode` + ID/IP | Android `ExitNodeID/IP` 与 Allow LAN 被设置 | LocalAPI prefs + peer route | NOT TESTED |
 | C6 | `acceptRoutes` / `acceptDNS` / `vpnEnabled` | 对应 `RouteAll` / `CorpDNS` / `WantRunning`；VPN 开启时需系统授权并建立 TUN | LocalAPI prefs + AVD VPN 状态 | PASS（AVD + 真机 VPN/TUN） |
-| C7 | 高级官方偏好 | SSH/Web、Shields、SNAT、过滤等字段正确下发 | LocalAPI prefs/status | NOT TESTED；AutoUpdate 尚未映射 Android |
+| C7 | 高级官方偏好 | SSH/Web、Shields、SNAT、过滤等字段正确下发 | LocalAPI prefs/status | NOT TESTED |
 
 ## 生命周期与安全矩阵
 
 | ID | 场景 | 期望 |
 | --- | --- | --- |
-| L1 | 六位 code 正确兑换 | 一次成功、返回受管会话和一次性 key |
-| L2 | code 并发兑换 | 只有一个 2xx，其余 401 |
+| L1 | 六位 code 正确兑换 | 一次成功、返回受管会话和一次性 key；未知网络结果用同一幂等键取得相同响应 |
+| L2 | code 并发兑换 | 不同幂等键只有一个创建成功；同一键同一请求安全重放，同一键不同请求为 409 |
 | L3 | code 过期/重放 | 401，不创建 node |
 | L4 | 错误 code 高频尝试 | 429 后继续拒绝 |
 | L5 | Wi-Fi 丢失（无退出策略） | 保持会话、节点和广告路由；新 LAN 流 fail closed；Wi-Fi 恢复后同一会话自动继续 |
@@ -55,15 +55,15 @@
 | L12 | 服务端不可用 | 已运行会话按本地策略收敛，不生成新 key；保留清理待办 |
 | L13 | Wi-Fi 与蜂窝都存在但 Wi-Fi 无 WAN | control 仍蜂窝，网关 TCP/UDP 仍 Wi-Fi |
 | L14 | 本地网段重叠 | 记录 /32 最长前缀实际行为，不推断 |
-| L15 | `onAppClose` 心跳中断 | 租约内不清理；超时后撤销路由并删除精确设备，历史状态保留为 `heartbeat_timeout` |
+| L15 | `onAppClose` 同步中断 | 租约内不清理；超时后撤销路由并删除精确设备，历史状态保留为 `sync_timeout` |
 
 ## 已执行的自动化测试
 
 - server：code 原子消费、路由校验、供应和清理流程。
 - server：配置规范化、默认网关 `/32`、Exit Node 默认路由与 Wi-Fi 绑定路由分离、
   配置响应和内嵌管理网页。
-- server：普通/Debug 测试和 vet、MinGW64 CGO race detector；真机完成 `onAppClose`
-  心跳中断与超时清理闭环。
+- server：普通/Debug 测试和 vet、MinGW64 CGO race detector；`onAppClose` 需要验证
+  revisioned sync 中断与超时清理闭环。
 - third_party/tailscale/wgengine/netstack：上游 netstack 测试套件，覆盖新代码
   的宿主编译和现有 forwarding 行为。
 

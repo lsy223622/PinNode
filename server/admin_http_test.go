@@ -235,6 +235,7 @@ func TestRemoteFirstRunSetupIsDeniedByDefault(t *testing.T) {
 		http.MethodPost, "/v1/auth/setup",
 		strings.NewReader(`{"username":"owner","password":"correct horse battery staple","powId":"`+challenge.ID+`","powNonce":"`+nonce+`"}`),
 	)
+	request.Header.Set("Content-Type", "application/json")
 	request.RemoteAddr = "198.51.100.10:1234"
 	request.TLS = &tls.ConnectionState{}
 	response := httptest.NewRecorder()
@@ -285,6 +286,7 @@ func localRequest(method, path string, body *strings.Reader) *http.Request {
 		request = httptest.NewRequest(method, path, nil)
 	} else {
 		request = httptest.NewRequest(method, path, body)
+		request.Header.Set("Content-Type", "application/json")
 	}
 	request.RemoteAddr = "127.0.0.1:1234"
 	return request
