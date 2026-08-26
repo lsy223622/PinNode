@@ -14,7 +14,7 @@ Android 与 Go backend。
 
 管理员还可以下发本机使用的 Exit Node、额外 CIDR、Shields Up、Hostname、
 SNAT/有状态过滤和当前 Android backend 支持的其他偏好。手机端只负责输入一次性
-六位 PIN、展示连接/路由状态和明确退出，不允许本地修改受管配置。
+六位授权码、展示连接/路由状态和明确退出，不允许本地修改受管配置。
 
 ## 会话与退出策略
 

@@ -158,7 +158,13 @@ class RescueSessionManager(private val app: App) {
   @Serializable
   private data class PendingCleanupQueue(val sessions: List<ActiveSession> = emptyList())
 
-  private class ServerHttpException(val status: Int) : IOException("PinNode server HTTP $status")
+  internal class RescueServerHttpException(val status: Int) : IOException()
+
+  internal class RescueInvalidCodeException : IOException()
+
+  internal class RescueConfigurationException(message: String) : IOException(message)
+
+  internal class RescueVpnPermissionException : IOException()
 
   private val mutex = Mutex()
   private val cleanupMutex = Mutex()
@@ -209,7 +215,7 @@ class RescueSessionManager(private val app: App) {
           return@withLock Result.failure(IllegalStateException("临时会话已经运行"))
         }
         if (!Regex("^[0-9]{6}$").matches(code)) {
-          return@withLock Result.failure(IllegalArgumentException("PIN 必须是六位数字"))
+          return@withLock Result.failure(RescueInvalidCodeException())
         }
         val route = app.currentWifiGatewayRoute().orEmpty()
         val wifiSubnetRoute = app.currentWifiSubnetRoute().orEmpty()
@@ -359,7 +365,7 @@ class RescueSessionManager(private val app: App) {
           session.token,
           session.serverUrl.ifBlank { configuredServerUrl() },
       )
-    } catch (error: ServerHttpException) {
+    } catch (error: RescueServerHttpException) {
       if (error.status !in setOf(404, 410)) throw error
     }
   }
@@ -512,7 +518,7 @@ class RescueSessionManager(private val app: App) {
                   )
                 }
                 .onFailure { error ->
-                  if (error is ServerHttpException && error.status in setOf(404, 409, 410)) {
+                  if (error is RescueServerHttpException && error.status in setOf(404, 409, 410)) {
                     stop()
                     return@launch
                   }
@@ -578,11 +584,11 @@ class RescueSessionManager(private val app: App) {
     pendingVpnPermission = result
     if (!_vpnPermissionRequests.tryEmit(intent)) {
       pendingVpnPermission = null
-      throw IOException("无法请求 Android VPN 权限")
+      throw RescueVpnPermissionException()
     }
     try {
       if (!result.await()) {
-        throw IOException("未授予 Android VPN 权限")
+        throw RescueVpnPermissionException()
       }
     } finally {
       if (pendingVpnPermission === result) {
@@ -687,7 +693,7 @@ class RescueSessionManager(private val app: App) {
               session.serverUrl.ifBlank { configuredServerUrl() },
           )
           return@withTimeout
-        } catch (error: ServerHttpException) {
+        } catch (error: RescueServerHttpException) {
           if (error.status !in setOf(409, 429, 502)) throw error
           delay(2_000)
         }
@@ -723,7 +729,7 @@ class RescueSessionManager(private val app: App) {
           val status = connection.responseCode
           debugRequest(operation, "response status=$status elapsedMs=${elapsedMillis(startedAt)}")
           if (status !in 200..299) {
-            throw ServerHttpException(status)
+            throw RescueServerHttpException(status)
           }
           if (T::class == Unit::class) {
             @Suppress("UNCHECKED_CAST") return@withContext Unit as T
@@ -760,7 +766,7 @@ class RescueSessionManager(private val app: App) {
           val status = connection.responseCode
           debugRequest(operation, "response status=$status elapsedMs=${elapsedMillis(startedAt)}")
           if (status !in 200..299) {
-            throw ServerHttpException(status)
+            throw RescueServerHttpException(status)
           }
           @Suppress("UNCHECKED_CAST") return@withContext Unit as T
         } catch (error: Throwable) {
@@ -803,21 +809,28 @@ class RescueSessionManager(private val app: App) {
   }
 
   private fun serverUrlValidationError(value: String): IOException? {
-    if (value.isBlank()) return IOException("未配置 PinNode 配置下发 API 地址")
+    if (value.isBlank()) {
+      return RescueConfigurationException(
+          "尚未配置 PinNode 配置服务器：请填写服务器 API 地址，或安装由管理员锁定服务器的正式包。")
+    }
     val uri =
         try {
           URI(value)
         } catch (error: Exception) {
-          return IOException("PinNode API 地址格式无效", error)
+          return RescueConfigurationException(
+              "配置服务器地址格式无效：请填写完整的 https:// 地址。")
         }
     if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) {
-      return IOException("PinNode API 地址必须是带主机名的 http(s) URL")
+      return RescueConfigurationException(
+          "配置服务器地址格式无效：请填写带主机名的 http(s) 地址。")
     }
     if (uri.scheme == "http" && !BuildConfig.DEBUG) {
-      return IOException("Release 构建的 PinNode API 必须使用 HTTPS")
+      return RescueConfigurationException(
+          "正式版只能使用 HTTPS 连接配置服务器：请检查地址和服务器证书。")
     }
     if (uri.rawQuery != null || uri.rawFragment != null || uri.userInfo != null) {
-      return IOException("PinNode API 地址不应包含查询参数、片段或用户信息")
+      return RescueConfigurationException(
+          "配置服务器地址不应包含查询参数、片段或用户信息：请只填写基础地址。")
     }
     return null
   }

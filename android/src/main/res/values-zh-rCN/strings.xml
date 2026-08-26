@@ -8,10 +8,13 @@
     <string name="rescue_node_pin">六位授权码</string>
     <string name="rescue_node_start">开始临时会话</string>
     <string name="rescue_node_confirm">确认并启动临时节点</string>
+    <string name="rescue_connecting">正在连接…</string>
     <string name="rescue_node_stop">停止临时会话</string>
     <string name="rescue_node_running">临时节点已运行，配置由服务器管理</string>
     <string name="rescue_status_idle">尚未启动</string>
     <string name="rescue_status_running">临时会话运行中</string>
+    <string name="rescue_status_waiting_cellular">等待移动数据恢复</string>
+    <string name="rescue_status_waiting_cellular_detail">临时会话仍在运行；Tailscale 控制面固定使用移动数据，请开启并等待移动数据恢复。</string>
     <string name="rescue_status_waiting_wifi">等待 Wi-Fi 恢复</string>
     <string name="rescue_status_waiting_wifi_detail">临时会话保持运行；局域网转发暂停，Wi-Fi 恢复后自动继续。</string>
     <string name="rescue_network_title">网络连接</string>
@@ -34,4 +37,22 @@
     <string name="rescue_enabled">已启用</string>
     <string name="rescue_disabled">未启用</string>
     <string name="rescue_none">无</string>
+    <string name="rescue_error_invalid_code">授权码格式不正确：请在管理页生成并输入当前的六位数字授权码。</string>
+    <string name="rescue_error_configuration">服务器下发的配置无法应用：请检查管理页中的路由、Exit Node 和 DNS 组合，然后生成新的授权码。</string>
+    <string name="rescue_error_vpn_permission">未授予 Android VPN 权限：请在系统弹窗中允许 PinNode，然后重新生成授权码并重试。</string>
+    <string name="rescue_error_network">无法连接配置服务器：请确认当前网络可以访问互联网，并检查服务器域名和反向代理；恢复后请重新生成授权码再试。</string>
+    <string name="rescue_error_cellular_network">无法使用移动数据连接配置服务器：救援连接固定使用移动数据，不会回退到 Wi-Fi。请打开移动数据并确认可以访问互联网，恢复后重新生成授权码再试。</string>
+    <string name="rescue_error_tls">无法建立 HTTPS 安全连接：请检查服务器域名证书、手机系统时间和反向代理配置。</string>
+    <string name="rescue_error_timeout">等待临时节点上线超时：请确认服务器在线、Tailscale 控制面可访问，然后重新生成授权码再试。</string>
+    <string name="rescue_error_start">临时会话启动失败：请确认网络正常，并使用管理页新生成的授权码；若仍失败，请检查服务器状态。</string>
+    <string name="rescue_error_stop">临时会话已停止，但服务器端清理未完成：请保持网络连接并重新打开 PinNode，应用会自动重试清理。</string>
+    <string name="rescue_error_http_400">服务器拒绝了配置：授权码可能已失效，或配置组合不被支持。请回到管理页检查配置并重新生成授权码。</string>
+    <string name="rescue_error_http_401">授权码无效、已过期或已经使用：请回到管理页重新生成授权码，并清空后重新输入。</string>
+    <string name="rescue_error_http_403">服务器拒绝访问：请确认管理凭据和当前账号有权使用该配置。</string>
+    <string name="rescue_error_http_404">找不到配置服务器接口：请检查服务器地址、反向代理和客户端/服务端版本。</string>
+    <string name="rescue_error_http_409">会话状态冲突：这个授权码可能已被使用。请停止旧会话或重新生成授权码。</string>
+    <string name="rescue_error_http_410">授权码或临时会话已过期：请回到管理页生成新的授权码。</string>
+    <string name="rescue_error_http_429">请求过于频繁：请等待一会儿，再生成新的授权码重试。</string>
+    <string name="rescue_error_http_5xx">服务器暂时不可用：请检查服务端和 Tailscale 控制面状态，稍后重新生成授权码。</string>
+    <string name="rescue_error_http_other">服务器返回错误（HTTP %1$d）：请检查服务器日志和配置后重试。</string>
 </resources>

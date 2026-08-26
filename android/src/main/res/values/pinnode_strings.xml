@@ -9,10 +9,13 @@
     <string name="rescue_node_pin">Six-digit authorization code</string>
     <string name="rescue_node_start">Start temporary session</string>
     <string name="rescue_node_confirm">Confirm and start temporary node</string>
+    <string name="rescue_connecting">Connecting…</string>
     <string name="rescue_node_stop">Stop temporary session</string>
     <string name="rescue_node_running">Temporary node active with server-managed configuration</string>
     <string name="rescue_status_idle">Not started</string>
     <string name="rescue_status_running">Temporary session running</string>
+    <string name="rescue_status_waiting_cellular">Waiting for mobile data</string>
+    <string name="rescue_status_waiting_cellular_detail">The session remains active, but Tailscale control traffic is fixed to mobile data. Turn on mobile data and wait for it to recover.</string>
     <string name="rescue_status_waiting_wifi">Waiting for Wi-Fi</string>
     <string name="rescue_status_waiting_wifi_detail">The session remains active. LAN forwarding will resume automatically when Wi-Fi returns.</string>
     <string name="rescue_network_title">Network connections</string>
@@ -35,4 +38,22 @@
     <string name="rescue_enabled">Enabled</string>
     <string name="rescue_disabled">Disabled</string>
     <string name="rescue_none">None</string>
+    <string name="rescue_error_invalid_code">The authorization code is invalid. Generate the current six-digit code in the admin page and enter it again.</string>
+    <string name="rescue_error_configuration">The server configuration could not be applied. Check the routing, Exit Node, and DNS options, then generate a new code.</string>
+    <string name="rescue_error_vpn_permission">Android VPN permission was not granted. Allow PinNode in the system dialog, then generate a new code and try again.</string>
+    <string name="rescue_error_network">The configuration server could not be reached. Check Internet access, the server hostname, and the reverse proxy, then generate a new code and try again.</string>
+    <string name="rescue_error_cellular_network">The configuration server could not be reached over mobile data. Rescue mode does not fall back to Wi-Fi. Turn on mobile data, verify Internet access, then generate a new code and try again.</string>
+    <string name="rescue_error_tls">A secure HTTPS connection could not be established. Check the server certificate, the device system time, and the reverse proxy.</string>
+    <string name="rescue_error_timeout">The temporary node did not come online in time. Check the server and Tailscale control-plane status, then generate a new code and try again.</string>
+    <string name="rescue_error_start">The temporary session could not start. Check the network and use a newly generated authorization code; if it still fails, check the server status.</string>
+    <string name="rescue_error_stop">The temporary session stopped, but server cleanup did not finish. Keep the network connected and reopen PinNode so cleanup can be retried.</string>
+    <string name="rescue_error_http_400">The server rejected the configuration. The code may be invalid or the combination may not be supported. Check the admin page and generate a new code.</string>
+    <string name="rescue_error_http_401">The code is invalid, expired, or already used. Generate a new code in the admin page and enter it after clearing the old one.</string>
+    <string name="rescue_error_http_403">The server denied access. Check that the selected management credential has permission to use this configuration.</string>
+    <string name="rescue_error_http_404">The configuration endpoint was not found. Check the server URL, reverse proxy, and client/server versions.</string>
+    <string name="rescue_error_http_409">The session state conflicts with the server. The code may already be in use; stop the old session or generate a new code.</string>
+    <string name="rescue_error_http_410">The authorization code or temporary session has expired. Generate a new code in the admin page.</string>
+    <string name="rescue_error_http_429">Too many requests. Wait a moment, then generate a new authorization code and try again.</string>
+    <string name="rescue_error_http_5xx">The server is temporarily unavailable. Check the server and Tailscale control-plane status, then generate a new code later.</string>
+    <string name="rescue_error_http_other">The server returned an error (HTTP %1$d). Check the server logs and configuration, then try again.</string>
 </resources>

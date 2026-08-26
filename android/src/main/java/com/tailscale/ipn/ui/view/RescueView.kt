@@ -106,8 +106,15 @@ fun RescueView(onNavigateBack: (() -> Unit)? = null, viewModel: RescueViewModel 
             code = code,
             busy = busy,
             onServerUrlChange = viewModel::setServerUrl,
-            onCodeChange = { value -> code = value.filter(Char::isDigit).take(6) },
-            onStart = { viewModel.start(code) },
+            onCodeChange = { value ->
+              code = value.filter(Char::isDigit).take(6)
+              viewModel.clearMessage()
+            },
+            onStart = {
+              val submittedCode = code
+              code = ""
+              viewModel.start(submittedCode)
+            },
         )
       } else {
         RoutingStatusCard(session = session)
@@ -172,14 +179,20 @@ private fun SessionStatusCard(session: RescueSessionState, network: RescueNetwor
           session.subnetRouterEnabled &&
           session.subnetRoutes.isNotEmpty() &&
           !network.wifi.connected
+  val waitingForCellular =
+      active &&
+          session.networkMode == "cellular" &&
+          network.tailscalePath == RescueTailscalePath.WAITING_FOR_CELLULAR
   val title =
       when {
+        waitingForCellular -> stringResource(R.string.rescue_status_waiting_cellular)
         waitingForWifi -> stringResource(R.string.rescue_status_waiting_wifi)
         active -> stringResource(R.string.rescue_status_running)
         else -> stringResource(R.string.rescue_status_idle)
       }
   val detail =
       when {
+        waitingForCellular -> stringResource(R.string.rescue_status_waiting_cellular_detail)
         waitingForWifi -> stringResource(R.string.rescue_status_waiting_wifi_detail)
         active -> stringResource(R.string.rescue_node_running)
         else -> stringResource(R.string.rescue_node_explanation)
@@ -397,7 +410,10 @@ private fun StartSessionCard(
           enabled = !busy && code.length == 6,
           modifier = Modifier.fillMaxWidth(),
       ) {
-        Text(stringResource(R.string.rescue_node_confirm))
+        Text(
+            stringResource(
+                if (busy) R.string.rescue_connecting else R.string.rescue_node_confirm),
+        )
       }
     }
   }
