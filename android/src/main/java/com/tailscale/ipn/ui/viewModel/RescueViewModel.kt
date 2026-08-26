@@ -36,6 +36,9 @@ class RescueViewModel : ViewModel() {
   private val _busy = MutableStateFlow(false)
   val busy: StateFlow<Boolean> = _busy
 
+  private val _connecting = MutableStateFlow(false)
+  val connecting: StateFlow<Boolean> = _connecting
+
   val sessionState
     get() = sessionManager.sessionState
 
@@ -69,23 +72,32 @@ class RescueViewModel : ViewModel() {
   fun start(code: String) {
     if (_busy.value) return
     _busy.value = true
+    _connecting.value = true
     _message.value = null
     sessionManager.setServerUrl(_serverUrl.value)
     viewModelScope.launch {
-      val result = sessionManager.start(code)
-      result.onFailure { error -> _message.value = userMessage(error, Operation.START) }
-      _busy.value = false
+      try {
+        val result = sessionManager.start(code)
+        result.onFailure { error -> _message.value = userMessage(error, Operation.START) }
+      } finally {
+        _connecting.value = false
+        _busy.value = false
+      }
     }
   }
 
   fun stop() {
     if (_busy.value) return
     _busy.value = true
+    _connecting.value = false
     _message.value = null
     viewModelScope.launch {
-      val result = sessionManager.stop()
-      result.onFailure { error -> _message.value = userMessage(error, Operation.STOP) }
-      _busy.value = false
+      try {
+        val result = sessionManager.stop()
+        result.onFailure { error -> _message.value = userMessage(error, Operation.STOP) }
+      } finally {
+        _busy.value = false
+      }
     }
   }
 

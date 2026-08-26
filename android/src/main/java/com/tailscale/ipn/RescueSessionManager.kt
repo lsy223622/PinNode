@@ -9,7 +9,10 @@ import android.net.VpnService
 import androidx.core.content.edit
 import com.tailscale.ipn.ui.localapi.Client
 import com.tailscale.ipn.ui.model.Ipn
+import com.tailscale.ipn.ui.model.Netmap
+import com.tailscale.ipn.ui.model.Tailcfg
 import com.tailscale.ipn.ui.notifier.Notifier
+import com.tailscale.ipn.ui.util.AdvertisedRoutesHelper
 import com.tailscale.ipn.util.TSLog
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -29,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -42,18 +46,134 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.serializer
 
+enum class RescueExitNodeStatus {
+  DISABLED,
+  CHECKING,
+  ACTIVE,
+  OFFLINE,
+  NOT_SELECTED,
+  UNAVAILABLE,
+  NOT_RUNNING,
+}
+
+enum class RescueAdvertiseExitNodeStatus {
+  DISABLED,
+  NOT_ADVERTISED,
+  CHECKING,
+  ACTIVE,
+  PENDING_APPROVAL,
+  NOT_RUNNING,
+}
+
 data class RescueSessionState(
     val active: Boolean = false,
     val activeRoute: String? = null,
     val networkMode: String = "default",
     val vpnEnabled: Boolean = false,
+    val tailscaleRunning: Boolean = false,
     val subnetRouterEnabled: Boolean = false,
     val subnetRoutes: List<String> = emptyList(),
-    val exitNodeEnabled: Boolean = false,
+    val exitNodeStatus: RescueExitNodeStatus = RescueExitNodeStatus.DISABLED,
     val exitNodeSelector: String? = null,
-    val advertiseExitNode: Boolean = false,
+    val effectiveExitNodeSelector: String? = null,
+    val advertiseExitNodeStatus: RescueAdvertiseExitNodeStatus =
+        RescueAdvertiseExitNodeStatus.DISABLED,
     val logoutAt: String? = null,
 )
+
+internal data class RescueExitNodeSelection(
+    val enabled: Boolean,
+    val id: String = "",
+    val ip: String = "",
+    val auto: String = "",
+)
+
+internal data class RescueExitNodeObservation(
+    val status: RescueExitNodeStatus,
+    val selector: String?,
+    val effectiveSelector: String? = null,
+)
+
+internal fun observeRescueExitNode(
+    selection: RescueExitNodeSelection,
+    backendState: Ipn.State,
+    prefs: Ipn.Prefs?,
+    netmap: Netmap.NetworkMap?,
+): RescueExitNodeObservation {
+  val selector = listOf(selection.id, selection.ip, selection.auto).firstOrNull(String::isNotBlank)
+  if (!selection.enabled) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.DISABLED, selector)
+  }
+  if (backendState == Ipn.State.NoState || backendState == Ipn.State.Starting) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.CHECKING, selector)
+  }
+  if (backendState != Ipn.State.Running) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.NOT_RUNNING, selector)
+  }
+  if (prefs == null || netmap == null) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.CHECKING, selector)
+  }
+
+  val activeExitNodeID = prefs.activeExitNodeID?.takeUnless { it.startsWith("auto:") }
+  val activePeer = activeExitNodeID?.let(netmap::getPeer)
+  val targetPeer =
+      when {
+        selection.id.isNotBlank() -> netmap.getPeer(selection.id)
+        selection.ip.isNotBlank() ->
+            netmap.Peers.orEmpty().firstOrNull { it.hasTailscaleAddress(selection.ip) }
+        selection.auto.isNotBlank() -> activePeer
+        else -> null
+      }
+  val targetDisplay = targetPeer?.rescueDisplayName() ?: selector
+  if (targetPeer == null) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.UNAVAILABLE, selector)
+  }
+  if (!targetPeer.isExitNode) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.UNAVAILABLE, targetDisplay)
+  }
+  if (activeExitNodeID == null || activeExitNodeID != targetPeer.StableID) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.NOT_SELECTED, targetDisplay)
+  }
+  if (targetPeer.Online != true) {
+    return RescueExitNodeObservation(RescueExitNodeStatus.OFFLINE, targetDisplay)
+  }
+  return RescueExitNodeObservation(
+      RescueExitNodeStatus.ACTIVE, targetDisplay, targetPeer.rescueDisplayName())
+}
+
+internal fun observeRescueAdvertiseExitNode(
+    requested: Boolean,
+    backendState: Ipn.State,
+    prefs: Ipn.Prefs?,
+    netmap: Netmap.NetworkMap?,
+): RescueAdvertiseExitNodeStatus {
+  if (!requested) {
+    return RescueAdvertiseExitNodeStatus.DISABLED
+  }
+  if (backendState == Ipn.State.NoState || backendState == Ipn.State.Starting) {
+    return RescueAdvertiseExitNodeStatus.CHECKING
+  }
+  if (backendState != Ipn.State.Running) {
+    return RescueAdvertiseExitNodeStatus.NOT_RUNNING
+  }
+  if (prefs == null || netmap == null) {
+    return RescueAdvertiseExitNodeStatus.CHECKING
+  }
+  if (!AdvertisedRoutesHelper.exitNodeOnFromPrefs(prefs)) {
+    return RescueAdvertiseExitNodeStatus.NOT_ADVERTISED
+  }
+  return if (netmap.SelfNode.isExitNode) {
+    RescueAdvertiseExitNodeStatus.ACTIVE
+  } else {
+    RescueAdvertiseExitNodeStatus.PENDING_APPROVAL
+  }
+}
+
+private fun Tailcfg.Node.hasTailscaleAddress(address: String): Boolean =
+    Addresses.orEmpty().any { it.substringBefore('/') == address }
+
+private fun Tailcfg.Node.rescueDisplayName(): String =
+    displayName.ifBlank { primaryIPv4Address ?: primaryIPv6Address ?: StableID }
 
 /**
  * 协调 PIN 兑换、临时登录、LocalAPI 路由广告和服务端清理。
@@ -174,6 +294,7 @@ class RescueSessionManager(private val app: App) {
   private var activeSession: ActiveSession? = null
   private var timedExitJob: Job? = null
   private var heartbeatJob: Job? = null
+  private var sessionStateJob: Job? = null
   private val _sessionState = MutableStateFlow(RescueSessionState())
   val sessionState: StateFlow<RescueSessionState> = _sessionState.asStateFlow()
   private val _vpnPermissionRequests = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
@@ -262,7 +383,7 @@ class RescueSessionManager(private val app: App) {
           pending = pending.copy(attached = true)
           activeSession = pending
           persistSession(pending)
-          applySessionState(pending)
+          startSessionStateMonitor(pending)
           scheduleTimedExit(pending)
           startHeartbeat(pending)
           Result.success(route)
@@ -274,6 +395,7 @@ class RescueSessionManager(private val app: App) {
               }
           app.setRescueRoutes(null)
           app.setRescueMode(false)
+          stopSessionStateMonitor()
           _sessionState.value = RescueSessionState()
           clearPersistedSession()
           pending?.let { session ->
@@ -314,6 +436,7 @@ class RescueSessionManager(private val app: App) {
       clearPersistedSession()
       app.setRescueRoutes(null)
       app.setRescueMode(false)
+      stopSessionStateMonitor()
       _sessionState.value = RescueSessionState()
 
       runCatching { clearManagedNode() }
@@ -328,6 +451,7 @@ class RescueSessionManager(private val app: App) {
       app.setRescueRoutes(null)
       app.setRescueMode(false)
       clearPersistedSession()
+      stopSessionStateMonitor()
       _sessionState.value = RescueSessionState()
       return Result.success(Unit)
     }
@@ -338,6 +462,7 @@ class RescueSessionManager(private val app: App) {
     heartbeatJob?.cancel()
     heartbeatJob = null
     clearPersistedSession()
+    stopSessionStateMonitor()
     _sessionState.value = RescueSessionState()
     var firstError: Throwable? = null
     runCatching { clearManagedNode() }.onFailure { firstError = it }
@@ -406,7 +531,7 @@ class RescueSessionManager(private val app: App) {
     activeSession = restored
     app.setRescueRoutes(restored.wifiRoutes)
     app.setRescueMode(restored.config.networkMode == "cellular")
-    applySessionState(restored)
+    startSessionStateMonitor(restored)
     scheduleTimedExit(restored)
     startHeartbeat(restored)
     if (restored.config.vpnEnabled && VpnService.prepare(app) == null) {
@@ -470,23 +595,67 @@ class RescueSessionManager(private val app: App) {
         .getOrDefault(emptyList())
   }
 
+  private fun startSessionStateMonitor(session: ActiveSession) {
+    stopSessionStateMonitor()
+    applySessionState(session)
+    sessionStateJob =
+        app.applicationScope.launch {
+          combine(Notifier.state, Notifier.prefs, Notifier.netmap) { backendState, prefs, netmap ->
+                buildSessionState(session, backendState, prefs, netmap)
+              }
+              .collect { state ->
+                if (activeSession?.id == session.id) {
+                  _sessionState.value = state
+                }
+              }
+        }
+  }
+
+  private fun stopSessionStateMonitor() {
+    sessionStateJob?.cancel()
+    sessionStateJob = null
+  }
+
   private fun applySessionState(session: ActiveSession) {
-    val config = session.config
     _sessionState.value =
-        RescueSessionState(
-            active = true,
-            activeRoute = session.route.ifBlank { null },
-            networkMode = config.networkMode,
-            vpnEnabled = config.vpnEnabled,
-            subnetRouterEnabled = config.subnetRouter,
-            subnetRoutes = session.wifiRoutes,
-            exitNodeEnabled = config.useExitNode,
-            exitNodeSelector =
-                listOf(config.exitNodeId, config.exitNodeIp, config.autoExitNode)
-                    .firstOrNull(String::isNotBlank),
-            advertiseExitNode = config.advertiseExitNode,
-            logoutAt = session.expiresAt.ifBlank { null },
+        buildSessionState(
+            session, Notifier.state.value, Notifier.prefs.value, Notifier.netmap.value)
+  }
+
+  private fun buildSessionState(
+      session: ActiveSession,
+      backendState: Ipn.State,
+      prefs: Ipn.Prefs?,
+      netmap: Netmap.NetworkMap?,
+  ): RescueSessionState {
+    val config = session.config
+    val exitObservation =
+        observeRescueExitNode(
+            RescueExitNodeSelection(
+                enabled = config.useExitNode,
+                id = config.exitNodeId,
+                ip = config.exitNodeIp,
+                auto = config.autoExitNode,
+            ),
+            backendState,
+            prefs,
+            netmap,
         )
+    return RescueSessionState(
+        active = true,
+        activeRoute = session.route.ifBlank { null },
+        networkMode = config.networkMode,
+        vpnEnabled = config.vpnEnabled,
+        tailscaleRunning = backendState == Ipn.State.Running,
+        subnetRouterEnabled = config.subnetRouter,
+        subnetRoutes = session.wifiRoutes,
+        exitNodeStatus = exitObservation.status,
+        exitNodeSelector = exitObservation.selector,
+        effectiveExitNodeSelector = exitObservation.effectiveSelector,
+        advertiseExitNodeStatus =
+            observeRescueAdvertiseExitNode(config.advertiseExitNode, backendState, prefs, netmap),
+        logoutAt = session.expiresAt.ifBlank { null },
+    )
   }
 
   private fun scheduleTimedExit(session: ActiveSession) {
@@ -810,27 +979,22 @@ class RescueSessionManager(private val app: App) {
 
   private fun serverUrlValidationError(value: String): IOException? {
     if (value.isBlank()) {
-      return RescueConfigurationException(
-          "尚未配置 PinNode 配置服务器：请填写服务器 API 地址，或安装由管理员锁定服务器的正式包。")
+      return RescueConfigurationException("尚未配置 PinNode 配置服务器：请填写服务器 API 地址，或安装由管理员锁定服务器的正式包。")
     }
     val uri =
         try {
           URI(value)
         } catch (error: Exception) {
-          return RescueConfigurationException(
-              "配置服务器地址格式无效：请填写完整的 https:// 地址。")
+          return RescueConfigurationException("配置服务器地址格式无效：请填写完整的 https:// 地址。")
         }
     if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) {
-      return RescueConfigurationException(
-          "配置服务器地址格式无效：请填写带主机名的 http(s) 地址。")
+      return RescueConfigurationException("配置服务器地址格式无效：请填写带主机名的 http(s) 地址。")
     }
     if (uri.scheme == "http" && !BuildConfig.DEBUG) {
-      return RescueConfigurationException(
-          "正式版只能使用 HTTPS 连接配置服务器：请检查地址和服务器证书。")
+      return RescueConfigurationException("正式版只能使用 HTTPS 连接配置服务器：请检查地址和服务器证书。")
     }
     if (uri.rawQuery != null || uri.rawFragment != null || uri.userInfo != null) {
-      return RescueConfigurationException(
-          "配置服务器地址不应包含查询参数、片段或用户信息：请只填写基础地址。")
+      return RescueConfigurationException("配置服务器地址不应包含查询参数、片段或用户信息：请只填写基础地址。")
     }
     return null
   }

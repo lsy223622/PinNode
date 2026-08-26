@@ -54,6 +54,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tailscale.ipn.R
+import com.tailscale.ipn.RescueAdvertiseExitNodeStatus
+import com.tailscale.ipn.RescueExitNodeStatus
 import com.tailscale.ipn.RescueLinkState
 import com.tailscale.ipn.RescueNetworkState
 import com.tailscale.ipn.RescueSessionState
@@ -70,6 +72,7 @@ fun RescueView(onNavigateBack: (() -> Unit)? = null, viewModel: RescueViewModel 
         viewModel.onVpnPermissionResult(result.resultCode == Activity.RESULT_OK)
       }
   val busy by viewModel.busy.collectAsState()
+  val connecting by viewModel.connecting.collectAsState()
   val session by viewModel.sessionState.collectAsState()
   val network by viewModel.networkState.collectAsState()
   val netmap by viewModel.netmap.collectAsState()
@@ -105,6 +108,7 @@ fun RescueView(onNavigateBack: (() -> Unit)? = null, viewModel: RescueViewModel 
             serverLocked = viewModel.serverLocked,
             code = code,
             busy = busy,
+            connecting = connecting,
             onServerUrlChange = viewModel::setServerUrl,
             onCodeChange = { value ->
               code = value.filter(Char::isDigit).take(6)
@@ -183,10 +187,37 @@ private fun SessionStatusCard(session: RescueSessionState, network: RescueNetwor
       active &&
           session.networkMode == "cellular" &&
           network.tailscalePath == RescueTailscalePath.WAITING_FOR_CELLULAR
+  val exitNodeIssue =
+      when (session.exitNodeStatus) {
+        RescueExitNodeStatus.CHECKING,
+        RescueExitNodeStatus.OFFLINE,
+        RescueExitNodeStatus.NOT_SELECTED,
+        RescueExitNodeStatus.UNAVAILABLE,
+        RescueExitNodeStatus.NOT_RUNNING -> true
+        else -> false
+      }
+  val advertiseExitNodeIssue =
+      when (session.advertiseExitNodeStatus) {
+        RescueAdvertiseExitNodeStatus.CHECKING,
+        RescueAdvertiseExitNodeStatus.PENDING_APPROVAL,
+        RescueAdvertiseExitNodeStatus.NOT_ADVERTISED,
+        RescueAdvertiseExitNodeStatus.NOT_RUNNING -> true
+        else -> false
+      }
+  val tailscaleStopped = active && session.vpnEnabled && !session.tailscaleRunning
+  val routingCheckInProgress =
+      session.exitNodeStatus == RescueExitNodeStatus.CHECKING ||
+          session.advertiseExitNodeStatus == RescueAdvertiseExitNodeStatus.CHECKING
+  val routingIssue = tailscaleStopped || exitNodeIssue || advertiseExitNodeIssue
   val title =
       when {
         waitingForCellular -> stringResource(R.string.rescue_status_waiting_cellular)
         waitingForWifi -> stringResource(R.string.rescue_status_waiting_wifi)
+        tailscaleStopped -> stringResource(R.string.rescue_status_tailscale_not_running)
+        routingCheckInProgress -> stringResource(R.string.rescue_status_routes_checking)
+        exitNodeIssue -> stringResource(R.string.rescue_status_exit_node_not_ready)
+        advertiseExitNodeIssue ->
+            stringResource(R.string.rescue_status_advertise_exit_node_not_ready)
         active -> stringResource(R.string.rescue_status_running)
         else -> stringResource(R.string.rescue_status_idle)
       }
@@ -194,12 +225,31 @@ private fun SessionStatusCard(session: RescueSessionState, network: RescueNetwor
       when {
         waitingForCellular -> stringResource(R.string.rescue_status_waiting_cellular_detail)
         waitingForWifi -> stringResource(R.string.rescue_status_waiting_wifi_detail)
+        tailscaleStopped -> stringResource(R.string.rescue_status_tailscale_not_running_detail)
+        session.exitNodeStatus == RescueExitNodeStatus.CHECKING ->
+            stringResource(R.string.rescue_status_routes_checking_detail)
+        session.exitNodeStatus == RescueExitNodeStatus.OFFLINE ->
+            stringResource(R.string.rescue_status_exit_node_offline_detail)
+        session.exitNodeStatus == RescueExitNodeStatus.NOT_SELECTED ->
+            stringResource(R.string.rescue_status_exit_node_not_selected_detail)
+        session.exitNodeStatus == RescueExitNodeStatus.UNAVAILABLE ->
+            stringResource(R.string.rescue_status_exit_node_unavailable_detail)
+        session.exitNodeStatus == RescueExitNodeStatus.NOT_RUNNING ||
+            session.advertiseExitNodeStatus == RescueAdvertiseExitNodeStatus.NOT_RUNNING ->
+            stringResource(R.string.rescue_status_tailscale_not_running_detail)
+        session.advertiseExitNodeStatus == RescueAdvertiseExitNodeStatus.CHECKING ->
+            stringResource(R.string.rescue_status_routes_checking_detail)
+        session.advertiseExitNodeStatus == RescueAdvertiseExitNodeStatus.PENDING_APPROVAL ->
+            stringResource(R.string.rescue_status_advertise_exit_node_pending_detail)
+        session.advertiseExitNodeStatus == RescueAdvertiseExitNodeStatus.NOT_ADVERTISED ->
+            stringResource(R.string.rescue_status_advertise_exit_node_not_advertised_detail)
         active -> stringResource(R.string.rescue_node_running)
         else -> stringResource(R.string.rescue_node_explanation)
       }
   val statusColor =
       when {
         waitingForWifi -> MaterialTheme.colorScheme.tertiary
+        routingIssue -> MaterialTheme.colorScheme.error
         active -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.outline
       }
@@ -208,7 +258,8 @@ private fun SessionStatusCard(session: RescueSessionState, network: RescueNetwor
       colors =
           CardDefaults.cardColors(
               containerColor =
-                  if (active) MaterialTheme.colorScheme.primaryContainer
+                  if (routingIssue) MaterialTheme.colorScheme.errorContainer
+                  else if (active) MaterialTheme.colorScheme.primaryContainer
                   else MaterialTheme.colorScheme.surfaceVariant),
       modifier = Modifier.fillMaxWidth(),
   ) {
@@ -344,20 +395,47 @@ private fun RoutingStatusCard(session: RescueSessionState) {
       }
       SettingRow(
           label = stringResource(R.string.rescue_use_exit_node),
-          value =
-              when {
-                !session.exitNodeEnabled -> stringResource(R.string.rescue_disabled)
-                else -> session.exitNodeSelector ?: stringResource(R.string.rescue_enabled)
-              },
+          value = exitNodeStatusText(session),
       )
       SettingRow(
           label = stringResource(R.string.rescue_advertise_exit_node),
-          value =
-              stringResource(
-                  if (session.advertiseExitNode) R.string.rescue_enabled
-                  else R.string.rescue_disabled),
+          value = advertiseExitNodeStatusText(session),
       )
     }
+  }
+}
+
+@Composable
+private fun exitNodeStatusText(session: RescueSessionState): String {
+  val target = session.exitNodeSelector ?: stringResource(R.string.rescue_none)
+  val actual = session.effectiveExitNodeSelector ?: target
+  return when (session.exitNodeStatus) {
+    RescueExitNodeStatus.DISABLED -> stringResource(R.string.rescue_disabled)
+    RescueExitNodeStatus.CHECKING -> stringResource(R.string.rescue_exit_status_checking)
+    RescueExitNodeStatus.ACTIVE -> stringResource(R.string.rescue_exit_status_active, actual)
+    RescueExitNodeStatus.OFFLINE -> stringResource(R.string.rescue_exit_status_offline, actual)
+    RescueExitNodeStatus.NOT_SELECTED ->
+        stringResource(R.string.rescue_exit_status_not_selected, target)
+    RescueExitNodeStatus.UNAVAILABLE ->
+        stringResource(R.string.rescue_exit_status_unavailable, target)
+    RescueExitNodeStatus.NOT_RUNNING -> stringResource(R.string.rescue_exit_status_not_running)
+  }
+}
+
+@Composable
+private fun advertiseExitNodeStatusText(session: RescueSessionState): String {
+  return when (session.advertiseExitNodeStatus) {
+    RescueAdvertiseExitNodeStatus.DISABLED -> stringResource(R.string.rescue_disabled)
+    RescueAdvertiseExitNodeStatus.CHECKING ->
+        stringResource(R.string.rescue_advertise_exit_status_checking)
+    RescueAdvertiseExitNodeStatus.ACTIVE ->
+        stringResource(R.string.rescue_advertise_exit_status_active)
+    RescueAdvertiseExitNodeStatus.PENDING_APPROVAL ->
+        stringResource(R.string.rescue_advertise_exit_status_pending)
+    RescueAdvertiseExitNodeStatus.NOT_ADVERTISED ->
+        stringResource(R.string.rescue_advertise_exit_status_not_advertised)
+    RescueAdvertiseExitNodeStatus.NOT_RUNNING ->
+        stringResource(R.string.rescue_advertise_exit_status_not_running)
   }
 }
 
@@ -367,6 +445,7 @@ private fun StartSessionCard(
     serverLocked: Boolean,
     code: String,
     busy: Boolean,
+    connecting: Boolean,
     onServerUrlChange: (String) -> Unit,
     onCodeChange: (String) -> Unit,
     onStart: () -> Unit,
@@ -412,7 +491,7 @@ private fun StartSessionCard(
       ) {
         Text(
             stringResource(
-                if (busy) R.string.rescue_connecting else R.string.rescue_node_confirm),
+                if (connecting) R.string.rescue_connecting else R.string.rescue_node_confirm),
         )
       }
     }
