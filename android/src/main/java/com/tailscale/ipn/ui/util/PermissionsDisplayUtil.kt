@@ -3,11 +3,11 @@
 
 package com.tailscale.ipn.ui.util
 
-import android.net.Uri
+import androidx.core.net.toUri
 
 /** Converts a SAF URI string to a more human-friendly folder display name. */
 fun friendlyDirName(uriStr: String): String {
-  val uri = Uri.parse(uriStr)
+  val uri = uriStr.toUri()
   val segment = uri.lastPathSegment ?: return uriStr
 
   return when {

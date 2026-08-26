@@ -5,7 +5,6 @@ package com.tailscale.ipn
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
@@ -99,21 +98,10 @@ class ShareActivity : ComponentActivity() {
 
     val uris: List<Uri?>? =
         when (act) {
-          Intent.ACTION_SEND -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          Intent.ACTION_SEND ->
               listOf(intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
-            } else {
-              @Suppress("DEPRECATION")
-              listOf(intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri)
-            }
-          }
-          Intent.ACTION_SEND_MULTIPLE -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          Intent.ACTION_SEND_MULTIPLE ->
               intent.getParcelableArrayListExtra<Uri?>(Intent.EXTRA_STREAM, Uri::class.java)
-            } else {
-              @Suppress("DEPRECATION") intent.getParcelableArrayListExtra<Uri?>(Intent.EXTRA_STREAM)
-            }
-          }
           else -> {
             TSLog.e(TAG, "No extras found in intent - nothing to share")
             null

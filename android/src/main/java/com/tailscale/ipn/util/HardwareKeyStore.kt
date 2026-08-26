@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 package com.tailscale.ipn.util
 
-import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyPair
@@ -36,9 +35,6 @@ class HardwareKeyStore() {
   }
 
   fun createKey(): String {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-      throw HardwareKeysNotSupported()
-    }
     val id = newID()
     val kpg: KeyPairGenerator =
         KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 package com.tailscale.ipn.ui.view
 
-import android.os.Build
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -143,6 +142,7 @@ fun MainView(
             // until permission has been granted to prepare the VPN.
             val isPrepared by viewModel.isVpnPrepared.collectAsState(initial = true)
             val isOn by viewModel.vpnToggleState.collectAsState(initial = false)
+            val isToggleInProgress by viewModel.isToggleInProgress.collectAsState()
             val state by viewModel.ipnState.collectAsState(initial = Ipn.State.NoState)
             val user by viewModel.loggedInUser.collectAsState(initial = null)
             val stateVal by viewModel.stateRes.collectAsState(initial = R.string.placeholder)
@@ -162,8 +162,7 @@ fun MainView(
                         checked = isOn,
                         enabled =
                             !disableToggle.value &&
-                                !viewModel.isToggleInProgress
-                                    .value, // Disable switch if toggle is in progress
+                                !isToggleInProgress, // Disable switch if toggle is in progress
                         onCheckedChange = { desiredState -> viewModel.toggleVpn(desiredState) })
                   }
                 },
@@ -562,7 +561,7 @@ fun PeerList(
   val expandedPeer = viewModel.expandedMenuPeer.collectAsState()
   val localClipboardManager = LocalClipboardManager.current
   // Restrict search to devices running API 33+ (see https://github.com/tailscale/corp/issues/27375)
-  val enableSearch = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+  val enableSearch = true
   Column(modifier = Modifier.fillMaxSize()) {
     if (enableSearch && FeatureFlags.isEnabled("enable_new_search")) {
       Search(onSearchBarClick)

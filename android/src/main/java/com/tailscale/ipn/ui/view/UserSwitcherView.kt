@@ -4,7 +4,6 @@
 package com.tailscale.ipn.ui.view
 
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -39,6 +38,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tailscale.ipn.R
 import com.tailscale.ipn.ui.util.Lists
@@ -177,7 +177,7 @@ fun UserSwitcherView(nav: UserSwitcherNav, viewModel: UserSwitcherViewModel = vi
           TextButton(
               onClick = {
                 val intent =
-                    Intent(Intent.ACTION_VIEW, Uri.parse("https://tailscale.com/contact/support"))
+                    Intent(Intent.ACTION_VIEW, "https://tailscale.com/contact/support".toUri())
                 context.startActivity(intent)
                 showDeleteDialog = false
               }) {

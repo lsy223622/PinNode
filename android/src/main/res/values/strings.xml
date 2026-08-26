@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<!-- The legacy Tailscale catalog is retained for shared code, but these screens are not reachable
+     from PinNode's RescueView entry point. PinNode-owned strings live in pinnode_strings.xml. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="MissingTranslation,UnusedResources,PluralsCandidate,TypographyEllipsis,PrivateResource">
 
     <!-- Generic Strings -->
     <string name="log_in">Log in</string>
@@ -379,41 +382,5 @@
     <!-- Strings for Hardware Attestation MDM setting -->
     <string name="enable_hardware_attestation">Enable hardware attestation</string>
     <string name="use_hardware_backed_keys_to_bind_node_identity_to_the_device">Use hardware-backed keys to bind node identity to the device</string>
-
-    <!-- Strings for the PinNode rescue screen -->
-    <string name="rescue_node_title">PinNode</string>
-    <string name="rescue_node_explanation">Use a one-time authorization code to start a temporary node.</string>
-    <string name="rescue_node_server">Configuration server</string>
-    <string name="rescue_node_server_url">Config API URL</string>
-    <string name="rescue_node_server_url_hint">For example, https://example.invalid</string>
-    <string name="rescue_node_pin">Six-digit authorization code</string>
-    <string name="rescue_node_start">Start temporary session</string>
-    <string name="rescue_node_confirm">Confirm and start temporary node</string>
-    <string name="rescue_node_stop">Stop temporary session</string>
-    <string name="rescue_node_running">Temporary node active with server-managed configuration</string>
-    <string name="rescue_status_idle">Not started</string>
-    <string name="rescue_status_running">Temporary session running</string>
-    <string name="rescue_status_waiting_wifi">Waiting for Wi-Fi</string>
-    <string name="rescue_status_waiting_wifi_detail">The session remains active. LAN forwarding will resume automatically when Wi-Fi returns.</string>
-    <string name="rescue_network_title">Network connections</string>
-    <string name="rescue_wifi">Wi-Fi</string>
-    <string name="rescue_mobile_data">Mobile data</string>
-    <string name="rescue_connected">Connected</string>
-    <string name="rescue_disconnected">Disconnected</string>
-    <string name="rescue_internet_available">Internet available</string>
-    <string name="rescue_internet_unavailable">No Internet</string>
-    <string name="rescue_tailscale_path">Tailscale path</string>
-    <string name="rescue_tailscale_ip">Tailscale IP</string>
-    <string name="rescue_path_cellular">Mobile data</string>
-    <string name="rescue_path_waiting_cellular">Waiting for mobile data</string>
-    <string name="rescue_path_default">System default network</string>
-    <string name="rescue_routes_title">Routing configuration</string>
-    <string name="rescue_subnet_router">Subnet Router</string>
-    <string name="rescue_subnet_routes">Advertised subnets</string>
-    <string name="rescue_use_exit_node">Use Exit Node</string>
-    <string name="rescue_advertise_exit_node">Advertise as Exit Node</string>
-    <string name="rescue_enabled">Enabled</string>
-    <string name="rescue_disabled">Disabled</string>
-    <string name="rescue_none">None</string>
 
 </resources>

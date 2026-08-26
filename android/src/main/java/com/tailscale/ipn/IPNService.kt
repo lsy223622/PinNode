@@ -6,7 +6,6 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
-import android.os.Build
 import android.system.OsConstants
 import com.tailscale.ipn.mdm.MDMSettings
 import com.tailscale.ipn.ui.model.Ipn
@@ -186,9 +185,7 @@ open class IPNService : VpnService(), libtailscale.IPNService {
             .setConfigureIntent(configIntent())
             .allowFamily(OsConstants.AF_INET)
             .allowFamily(OsConstants.AF_INET6)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      b.setMetered(false) // Inherit the metered status from the underlying networks.
-    }
+    b.setMetered(false) // Inherit the metered status from the underlying networks.
     b.setUnderlyingNetworks(null) // Use all available networks.
 
     val mdmAllowed =

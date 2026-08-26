@@ -3,6 +3,7 @@
 
 package com.tailscale.ipn;
 
+import android.annotation.SuppressLint;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.os.Build;
@@ -31,9 +32,7 @@ public class QuickToggleService extends TileService {
             return;
         }
         t.setLabel("Tailscale");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            t.setSubtitle(act ? app.getString(R.string.connected) : app.getString(R.string.not_connected));
-        }
+        t.setSubtitle(act ? app.getString(R.string.connected) : app.getString(R.string.not_connected));
         t.setState(act ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         t.updateTile();
     }
@@ -97,6 +96,8 @@ public class QuickToggleService extends TileService {
       }
     }
 
+    @SuppressWarnings("deprecation")
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     private void launchMainActivity() {
       Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

@@ -3,6 +3,7 @@
 package com.tailscale.ipn
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
@@ -20,6 +21,8 @@ import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -257,7 +260,7 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
   // library and writes it to a global encrypted preference store.
   @Throws(IOException::class, GeneralSecurityException::class)
   override fun encryptToPref(prefKey: String?, plaintext: String?) {
-    getEncryptedPrefs().edit().putString(prefKey, plaintext).commit()
+    getEncryptedPrefs().edit(commit = true) { putString(prefKey, plaintext) }
   }
   // decryptFromPref decrypts a encrypted preference using the Jetpack Security
   // library and returns the plaintext.
@@ -291,7 +294,7 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
 
   fun getStoredDirectoryUri(): Uri? {
     val uriString = getEncryptedPrefs().getString(PREF_KEY_SAF_URI, null)
-    return uriString?.let { Uri.parse(it) }
+    return uriString?.let { it.toUri() }
   }
 
   /*
@@ -441,11 +444,7 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
   }
 
   override fun hardwareAttestationKeySupported(): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-      packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
-    } else {
-      false
-    }
+    return packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
   }
 
   private lateinit var keyStore: HardwareKeyStore
@@ -590,7 +589,7 @@ open class UninitializedApp : Application() {
     // File for shared preferences that are not encrypted.
     private const val UNENCRYPTED_PREFERENCES = "unencrypted"
     private lateinit var appInstance: UninitializedApp
-    lateinit var notificationManager: NotificationManagerCompat
+    @SuppressLint("StaticFieldLeak") lateinit var notificationManager: NotificationManagerCompat
     lateinit var appViewModel: AppViewModel
 
     @JvmStatic
@@ -615,7 +614,7 @@ open class UninitializedApp : Application() {
   }
 
   protected fun setAbleToStartVPN(rdy: Boolean) {
-    getUnencryptedPrefs().edit().putBoolean(ABLE_TO_START_VPN_KEY, rdy).apply()
+    getUnencryptedPrefs().edit { putBoolean(ABLE_TO_START_VPN_KEY, rdy) }
   }
   /** This function can be called without initializing the App. */
   fun isAbleToStartVPN(): Boolean {
@@ -695,7 +694,7 @@ open class UninitializedApp : Application() {
   fun createNotificationChannel(id: String, name: String, description: String, importance: Int) {
     val channel = NotificationChannel(id, name, importance)
     channel.description = description
-    notificationManager = NotificationManagerCompat.from(this)
+    notificationManager = NotificationManagerCompat.from(applicationContext)
     notificationManager.createNotificationChannel(channel)
   }
 
@@ -785,7 +784,7 @@ open class UninitializedApp : Application() {
   }
 
   fun updateIsClientLoggingEnabled(value: Boolean) {
-    getUnencryptedPrefs().edit().putBoolean(IS_CLIENT_LOGGING_ENABLED_KEY, value).apply()
+    getUnencryptedPrefs().edit { putBoolean(IS_CLIENT_LOGGING_ENABLED_KEY, value) }
     App.get().getLibtailscaleApp().setClientLoggingEnabled(getIsClientLoggingEnabled())
   }
 
@@ -795,17 +794,14 @@ open class UninitializedApp : Application() {
       return
     }
 
-    getUnencryptedPrefs().edit().putStringSet(SELECTED_APPS_KEY, packageNames.toSet()).apply()
+    getUnencryptedPrefs().edit { putStringSet(SELECTED_APPS_KEY, packageNames.toSet()) }
 
     this.restartVPN()
   }
 
   fun switchUserSelectedPackages() {
-    getUnencryptedPrefs()
-        .edit()
-        .putBoolean(ALLOW_SELECTED_APPS_KEY, !allowSelectedPackages())
-        .apply()
-    getUnencryptedPrefs().edit().putStringSet(SELECTED_APPS_KEY, setOf()).apply()
+    getUnencryptedPrefs().edit { putBoolean(ALLOW_SELECTED_APPS_KEY, !allowSelectedPackages()) }
+    getUnencryptedPrefs().edit { putStringSet(SELECTED_APPS_KEY, setOf()) }
 
     this.restartVPN()
   }

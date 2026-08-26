@@ -3,8 +3,6 @@
 
 package com.tailscale.ipn.ui.view
 
-import android.os.Build
-import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -34,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -90,8 +87,6 @@ fun HealthView(backToSettings: BackNavigation, model: HealthViewModel = viewMode
 @Composable
 fun HealthWarningView(warning: Health.UnhealthyState) {
   val localClipboardManager = LocalClipboardManager.current
-  val context = LocalContext.current
-  val copiedText = stringResource(R.string.copied)
   var menuExpanded by remember { mutableStateOf(false) }
 
   // Android TV has no clipboard.
@@ -132,10 +127,6 @@ fun HealthWarningView(warning: Health.UnhealthyState) {
                 text = { Text(text = stringResource(R.string.copy)) },
                 onClick = {
                   localClipboardManager.setText(AnnotatedString(warning.clipboardText))
-                  // Android 13+ shows its own copy confirmation.
-                  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                    Toast.makeText(context, copiedText, Toast.LENGTH_SHORT).show()
-                  }
                   menuExpanded = false
                 })
           }

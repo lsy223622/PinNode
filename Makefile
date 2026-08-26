@@ -4,6 +4,9 @@
 
 ## For signed release build JKS_PASSWORD must be set to the password for the jks keystore
 ## and JKS_PATH must be set to the path to the jks keystore.
+## JKS_ALIAS may be overridden when the keystore uses a different key alias.
+
+JKS_ALIAS ?= pinnode
 
 # The docker image to use for the build environment.  Changing this
 # will force a rebuild of the docker image.  If there is an existing image
@@ -158,12 +161,12 @@ $(DEBUG_APK): libtailscale debug-symbols version gradle-dependencies build-unstr
 # Builds the release AAB and signs it (phone/tablet/chromeOS variant)
 .PHONY: release
 release: jarsign-env $(RELEASE_AAB)
-	@jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore $(JKS_PATH) -storepass $(JKS_PASSWORD) $(RELEASE_AAB) tailscale
+	@jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore $(JKS_PATH) -storepass $(JKS_PASSWORD) $(RELEASE_AAB) $(JKS_ALIAS)
 
 # Builds the release AAB and signs it (androidTV variant)
 .PHONY: release-tv
 release-tv: jarsign-env $(RELEASE_TV_AAB)
-	@jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore $(JKS_PATH) -storepass $(JKS_PASSWORD) $(RELEASE_TV_AAB) tailscale
+	@jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore $(JKS_PATH) -storepass $(JKS_PASSWORD) $(RELEASE_TV_AAB) $(JKS_ALIAS)
 
 # gradle-dependencies groups together the android sources and libtailscale needed to assemble tests/debug/release builds.
 .PHONY: gradle-dependencies
@@ -288,7 +291,7 @@ env:
 .PHONY: jarsign-env
 jarsign-env:
 ifeq ($(JKS_PATH),)
-	$(error JKS_PATH is not set.  export JKS_PATH=/path/to/tailcale.jks)
+	$(error JKS_PATH is not set.  export JKS_PATH=/path/to/pinnode-release.jks)
 endif
 ifeq ($(JKS_PASSWORD),)
 	$(error JKS_PASSWORD is not set.  export JKS_PASSWORD=passwordForTailcale.jks)
@@ -296,7 +299,7 @@ endif
 ifeq ($(wildcard $(JKS_PATH)),)
 	$(error JKS_PATH does not point to a file)
 endif
-	@echo "keystore path set to $(JKS_PATH)"
+	@echo "keystore path set to $(JKS_PATH), alias $(JKS_ALIAS)"
 
 .PHONY: androidpath
 androidpath:

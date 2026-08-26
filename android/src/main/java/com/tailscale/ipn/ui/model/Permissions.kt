@@ -4,10 +4,7 @@
 package com.tailscale.ipn.ui.model
 
 import android.Manifest
-import android.os.Build
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
-import androidx.core.app.NotificationManagerCompat
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionState
 import com.google.accompanist.permissions.isGranted
@@ -38,19 +35,6 @@ object Permissions {
           all.zip(permissionStates.permissions).map { (permission, state) ->
             Pair(permission, state.status.isGranted)
           })
-      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-        // On Android versions prior to 13, we have to programmatically check if notifications are
-        // being allowed.
-        val notificationsEnabled =
-            NotificationManagerCompat.from(LocalContext.current).areNotificationsEnabled()
-        result.add(
-            Pair(
-                Permission(
-                    "",
-                    R.string.permission_post_notifications,
-                    R.string.permission_post_notifications_needed),
-                notificationsEnabled))
-      }
       return result
     }
 
@@ -63,23 +47,11 @@ object Permissions {
    * strings.xml and the rest should take care of itself.
    */
   private val all: List<Permission> by lazy {
-    val result = mutableListOf<Permission>()
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-      result.add(
-          Permission(
-              Manifest.permission.WRITE_EXTERNAL_STORAGE,
-              R.string.permission_write_external_storage,
-              R.string.permission_write_external_storage_needed,
-          ))
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      result.add(
-          Permission(
-              Manifest.permission.POST_NOTIFICATIONS,
-              R.string.permission_post_notifications,
-              R.string.permission_post_notifications_needed))
-    }
-    result
+    listOf(
+        Permission(
+            Manifest.permission.POST_NOTIFICATIONS,
+            R.string.permission_post_notifications,
+            R.string.permission_post_notifications_needed))
   }
 }
 

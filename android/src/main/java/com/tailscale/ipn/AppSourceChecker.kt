@@ -3,7 +3,6 @@
 package com.tailscale.ipn
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 
 object AppSourceChecker {
@@ -16,11 +15,7 @@ object AppSourceChecker {
     Log.d(TAG, "Package name: $packageName")
 
     val installerPackageName =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-          packageManager.getInstallSourceInfo(packageName).installingPackageName
-        } else {
-          @Suppress("deprecation") packageManager.getInstallerPackageName(packageName)
-        }
+        packageManager.getInstallSourceInfo(packageName).installingPackageName
 
     Log.d(TAG, "Installer package name: $installerPackageName")
 

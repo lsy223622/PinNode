@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
+import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.tailscale.ipn.TaildropDirectoryStore
 import com.tailscale.ipn.ui.util.InputStreamAdapter
@@ -41,9 +42,6 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
     Libtailscale.setShareFileHelper(this)
     TSLog.d("ShareFileHelper", "init ShareFileHelper with savedUri: $savedUri")
   }
-
-  // A simple data class that holds a SAF OutputStream along with its URI.
-  data class SafStream(val uri: String, val stream: OutputStream)
 
   val taildropPrompt = MutableSharedFlow<Unit>(replay = 1)
 
@@ -86,25 +84,12 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
     directoryReady?.takeIf { !it.isCompleted }?.complete(Unit)
   }
 
-  // A helper function that opens or creates a SafStream for a given file.
-  private fun openSafFileOutputStream(fileName: String): Pair<String, OutputStream?> {
-    val context = appContext ?: return "" to null
-    val dirUri = savedUri ?: return "" to null
-    val dir = DocumentFile.fromTreeUri(context, Uri.parse(dirUri)) ?: return "" to null
-    val file =
-        dir.findFile(fileName)
-            ?: dir.createFile("application/octet-stream", fileName)
-            ?: return "" to null
-    val os = context.contentResolver.openOutputStream(file.uri, "rw")
-    return file.uri.toString() to os
-  }
-
   @Throws(IOException::class)
   private fun openWriterFD(fileName: String, offset: Long): Pair<String, SeekableOutputStream> {
     val ctx = appContext ?: throw IOException("App context not initialized")
     val dirUri = savedUri ?: throw IOException("No directory URI")
     val dir =
-        DocumentFile.fromTreeUri(ctx, Uri.parse(dirUri))
+        DocumentFile.fromTreeUri(ctx, dirUri.toUri())
             ?: throw IOException("Invalid tree URI: $dirUri")
     val file =
         dir.findFile(fileName)
@@ -137,7 +122,7 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
     val ctx = appContext ?: throw IOException("App context not initialized")
     val dirStr = savedUri ?: throw IOException("No saved directory URI")
     val dir =
-        DocumentFile.fromTreeUri(ctx, Uri.parse(dirStr))
+        DocumentFile.fromTreeUri(ctx, dirStr.toUri())
             ?: throw IOException("Invalid tree URI: $dirStr")
     val file = dir.findFile(fileName) ?: throw IOException("File not found: $fileName")
     val uri = file.uri.toString()
@@ -149,9 +134,9 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
   override fun renameFile(oldPath: String, targetName: String): String {
     val ctx = appContext ?: throw IOException("not initialized")
     val dirUri = savedUri ?: throw IOException("directory not set")
-    val srcUri = Uri.parse(oldPath)
+    val srcUri = oldPath.toUri()
     val dir =
-        DocumentFile.fromTreeUri(ctx, Uri.parse(dirUri))
+        DocumentFile.fromTreeUri(ctx, dirUri.toUri())
             ?: throw IOException("cannot open dir $dirUri")
 
     var finalName = targetName
@@ -209,7 +194,7 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
   override fun deleteFile(uri: String) {
     runBlocking { waitUntilTaildropDirReady() }
     val ctx = appContext ?: throw IOException("DeleteFile: not initialized")
-    val parsedUri = Uri.parse(uri)
+    val parsedUri = uri.toUri()
     val doc =
         DocumentFile.fromSingleUri(ctx, parsedUri)
             ?: throw IOException("DeleteFile: cannot resolve URI $parsedUri")
@@ -223,7 +208,7 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
     val context = appContext ?: throw IOException("app context not initialized")
     val dirUri = savedUri ?: throw IOException("SAF URI not initialized")
     val dir =
-        DocumentFile.fromTreeUri(context, Uri.parse(dirUri))
+        DocumentFile.fromTreeUri(context, dirUri.toUri())
             ?: throw IOException("could not resolve SAF root")
     val file =
         dir.findFile(fileName) ?: throw IOException("file \"$fileName\" not found in SAF directory")
@@ -248,7 +233,7 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
   fun listPartialFiles(suffix: String): Array<String> {
     val context = appContext ?: return emptyArray()
     val rootUri = savedUri ?: return emptyArray()
-    val dir = DocumentFile.fromTreeUri(context, Uri.parse(rootUri)) ?: return emptyArray()
+    val dir = DocumentFile.fromTreeUri(context, rootUri.toUri()) ?: return emptyArray()
     return dir.listFiles()
         .filter { it.name?.endsWith(suffix) == true }
         .mapNotNull { it.name }
@@ -269,7 +254,7 @@ object ShareFileHelper : libtailscale.ShareFileHelper {
     val context = appContext ?: throw IOException("app context not initialized")
     val rootUri = savedUri ?: throw IOException("SAF URI not initialized")
     val dir =
-        DocumentFile.fromTreeUri(context, Uri.parse(rootUri))
+        DocumentFile.fromTreeUri(context, rootUri.toUri())
             ?: throw IOException("could not open SAF root")
     val suffix = name.substringAfterLast('.', ".$name")
     val file =

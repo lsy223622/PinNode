@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.createBitmap
 import androidx.lifecycle.viewModelScope
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
@@ -61,7 +62,7 @@ class LoginQRViewModel : IpnViewModel() {
         }
 
     val qrCode =
-        Bitmap.createBitmap(
+        createBitmap(
             size,
             size,
             Bitmap.Config.ARGB_8888,

@@ -9,7 +9,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.net.VpnService;
-import android.os.Build;
+
 
 import androidx.annotation.NonNull;
 import androidx.work.Worker;
@@ -53,7 +53,7 @@ public final class StartVPNWorker extends Worker {
         Intent intent = app.getPackageManager().getLaunchIntentForPackage(app.getPackageName());
         assert intent != null;
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        int pendingIntentFlags = PendingIntent.FLAG_ONE_SHOT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_IMMUTABLE : 0);
+        int pendingIntentFlags = PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE;
         PendingIntent pendingIntent = PendingIntent.getActivity(app, 0, intent, pendingIntentFlags);
 
         Notification notification = new Notification.Builder(app, channelId).setContentTitle(app.getString(R.string.title_connection_failed)).setContentText(app.getString(R.string.body_open_tailscale)).setSmallIcon(R.drawable.ic_notification).setContentIntent(pendingIntent).setAutoCancel(true).build();
