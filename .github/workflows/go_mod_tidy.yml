@@ -29,8 +29,8 @@ jobs:
 
       - name: Check 'go mod tidy' is clean
         run: |
-          bash ./tool/go mod tidy
-          (cd server && bash ../tool/go mod tidy)
+          ./tool/go mod tidy
+          (cd server && ../tool/go mod tidy)
           echo
           echo
           git diff --name-only --exit-code || (echo "The files above need updating. Please run 'go mod tidy' in the affected module."; exit 1)

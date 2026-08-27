@@ -216,8 +216,7 @@ pinnode-application-test.apk: version gradle-dependencies
 # go.mod state. VERSION_LONG's trailing -g<hash> is this repo's HEAD, so this
 # must be re-run after any commit that should be reflected in the version (see
 # tag_release / bumposs).
-GO_TOOL := bash ./tool/go
-MKVERSION := $(GO_TOOL) run tailscale.com/cmd/mkversion
+MKVERSION := ./tool/go run tailscale.com/cmd/mkversion
 
 tailscale.version: go.mod go.sum go.toolchain.rev $(wildcard .git/HEAD)
 	@bash -c "$(MKVERSION) > tailscale.version"
@@ -237,10 +236,10 @@ $(GOBIN):
 	mkdir -p $(GOBIN)
 
 $(GOBIN)/gomobile: $(GOBIN)/gobind go.mod go.sum go.toolchain.rev | $(GOBIN)
-	$(GO_TOOL) install golang.org/x/mobile/cmd/gomobile
+	./tool/go install golang.org/x/mobile/cmd/gomobile
 
 $(GOBIN)/gobind: go.mod go.sum go.toolchain.rev
-	$(GO_TOOL) install golang.org/x/mobile/cmd/gobind
+	./tool/go install golang.org/x/mobile/cmd/gobind
 
 .PHONY: build-unstripped-aar
 build-unstripped-aar: tailscale.version $(GOBIN)/gomobile
@@ -347,8 +346,8 @@ bumposs: update-oss tailscale.version
 update-oss:
 	curl -f https://raw.githubusercontent.com/tailscale/tailscale/refs/heads/main/go.toolchain.rev > go.toolchain.rev.new
 	mv go.toolchain.rev.new go.toolchain.rev
-	GOPROXY=direct $(GO_TOOL) get tailscale.com@main
-	$(GO_TOOL) mod tidy -compat=1.24
+	GOPROXY=direct ./tool/go get tailscale.com@main
+	./tool/go mod tidy -compat=1.24
 
 # Get the commandline tools package, this provides (among other things) the sdkmanager binary.
 $(ANDROID_HOME)/cmdline-tools/latest/bin/sdkmanager:
@@ -380,7 +379,7 @@ checkandroidsdk: ## Check that Android SDK is installed
 
 .PHONY: go-test
 go-test: ## Run the Go tests (excludes packages requiring Android NDK)
-	$(GO_TOOL) test $$($(GO_TOOL) list ./... | grep -v '^github.com/lsy223622/PinNode/libtailscale$$')
+	./tool/go test $$(./tool/go list ./... | grep -v '^github.com/lsy223622/PinNode/libtailscale$$')
 
 .PHONY: test
 test: gradle-dependencies ## Run the Android tests

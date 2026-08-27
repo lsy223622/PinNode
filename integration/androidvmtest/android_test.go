@@ -171,7 +171,7 @@ func buildAndroidProbe(t *testing.T) string {
 	root := repoRoot(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", root+"/tool/go", "build", "-buildvcs=false", "-o", out, "./integration/androidvmtest/testnetprobe")
+	cmd := exec.CommandContext(ctx, root+"/tool/go", "build", "-buildvcs=false", "-o", out, "./integration/androidvmtest/testnetprobe")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
 		"GOOS=android",
