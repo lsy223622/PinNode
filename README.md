@@ -65,6 +65,16 @@ pinnode.serverLocked=true
 固定构建的界面只显示 `pinnode.serverName`，不会显示真实 URL，也不允许手机端修改。
 Debug 构建可以临时使用同一 LAN 内电脑的 HTTP 地址；Release 构建要求 HTTPS。
 
+## GitHub Release APK
+
+`.github/workflows/release-apk.yml` 只在 GitHub Release 被发布时运行，并检出该 Release
+对应的 tag。它会执行格式检查、Go 测试、Android 单元测试，使用 `apksigner` 生成签名
+APK 和 SHA-256 校验文件，再上传到该 Release；普通 push 或 commit 不会冻结版本，也
+不会触发发布构建。
+
+签名配置不进入仓库，具体发布权限由 GitHub 仓库管理员配置。Release 产物是可直接安装的
+`pinnode-release.apk`，不是 AAB。
+
 ## 运行配置下发服务
 
 ```text
@@ -109,7 +119,6 @@ PinNode 复用官方 backend 的 tailnet 数据面和 DNS/路由能力，但它�
 - [`docs/openapi.yaml`](docs/openapi.yaml)
 - [`server/README.md`](server/README.md)
 - [`docs/architecture.md`](docs/architecture.md)
-- [`docs/known-limitations.md`](docs/known-limitations.md)
 
 本仓库基于 Tailscale Android commit
 `0867f01687a3955f7c0b5c6c62b236b997d68601` 和匹配的 core snapshot
