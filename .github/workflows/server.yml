@@ -1,4 +1,4 @@
-name: go mod tidy
+name: Server CI
 
 on:
   push:
@@ -13,9 +13,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-go-mod-tidy:
-    runs-on: [ubuntu-latest]
-    timeout-minutes: 8
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Check out code
@@ -24,13 +24,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
-          cache: false
-          go-version-file: go.mod
+          cache-dependency-path: server/go.sum
+          go-version-file: server/go.mod
 
-      - name: Check 'go mod tidy' is clean
-        run: |
-          bash ./tool/go mod tidy
-          (cd server && bash ../tool/go mod tidy)
-          echo
-          echo
-          git diff --name-only --exit-code || (echo "The files above need updating. Please run 'go mod tidy' in the affected module."; exit 1)
+      - name: Run server tests
+        working-directory: server
+        run: go test ./...
+
+      - name: Run server vet
+        working-directory: server
+        run: go vet ./...

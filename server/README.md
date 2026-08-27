@@ -103,5 +103,19 @@ tag 限制的 OAuth client。数据库备份和 `pinnode.secret`/`PINNODE_INSTAN
 保护，任何一方单独泄露都不应足以还原凭据。POSIX 首次创建使用 `0600`；Windows 部署
 还应确保服务账号对密钥目录拥有独占 ACL。
 
+## 生产部署（systemd + HTTPS 反向代理）
+
+正式服务可以运行在自己的 Linux 服务器上。推荐使用独立服务账号和 systemd：
+
+1. 在 `server` 目录执行 `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o pinnode-server .`，把生成的二进制部署到服务账号可读的目录。
+2. 通过 systemd 的 `WorkingDirectory` 和 `EnvironmentFile` 指定运行目录与进程环境，设置
+   `PINNODE_LISTEN_ADDR=127.0.0.1:6633`；首次管理员注册完成后保持
+   `PINNODE_ALLOW_REMOTE_SETUP=false`。
+3. 由 OpenResty、Nginx 或其他 HTTPS 终止层监听公网，把请求反代到
+   `127.0.0.1:6633`，追加 `X-Forwarded-For`、`X-Forwarded-Proto` 等 header，并配置
+   `PINNODE_TRUSTED_PROXY_CIDRS` 只信任该反代来源。
+4. 部署或升级后从外部 HTTPS 地址检查 `/healthz`，同时分别备份 SQLite 数据库和实例根密钥；
+   替换二进制前保留上一版以便回滚。
+
 接口契约见 `../docs/api.md` 与 `../docs/openapi.yaml`，安全边界见
 `../docs/architecture.md` 与 `../docs/threat-model.md`。

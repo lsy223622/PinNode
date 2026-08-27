@@ -4,10 +4,10 @@
 
 set -euo pipefail
 
-AVD="${AVD:-tailscale-integration}"
+AVD="${AVD:-pinnode-integration}"
 AVD_IMAGE="${AVD_IMAGE:-system-images;android-33;google_apis;x86_64}"
 KEYCODE_MENU=82
-APK="${1:-/workspace/tailscale-debug.apk}"
+APK="${1:-/workspace/pinnode-debug.apk}"
 shift || true
 
 export GOPATH="${GOPATH:-${HOME}/.cache/go}"
@@ -61,7 +61,7 @@ done
 
 adb shell input keyevent "${KEYCODE_MENU}" >/dev/null 2>&1 || true
 
-./tool/go test ./integration/androidvmtest \
+bash ./tool/go test ./integration/androidvmtest \
     -run TestAndroidAuthKeyLogin \
     -android.apk="${APK}" \
     "$@"

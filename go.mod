@@ -1,4 +1,4 @@
-module github.com/tailscale/tailscale-android
+module github.com/lsy223622/PinNode
 
 go 1.26.6
 

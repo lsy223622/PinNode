@@ -57,7 +57,7 @@ RUN yes | sdkmanager --licenses >/dev/null && \
     sdkmanager \
         "build-tools;34.0.0" \
         "emulator" \
-        "ndk;27.2.12479018" \
+        "ndk;23.1.7779620" \
         "platform-tools" \
         "platforms;android-34" \
         "system-images;android-33;google_apis;x86_64"

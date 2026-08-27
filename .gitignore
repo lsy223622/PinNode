@@ -63,6 +63,7 @@ tailscale.jks
 *.tmp
 *.swp
 /server/.gocache
+/.gocache
 
 # Local build and test output
 /server/server

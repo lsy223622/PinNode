@@ -1,5 +1,5 @@
 {
-  description = "Tailscale Android build environment";
+  description = "PinNode Android build environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

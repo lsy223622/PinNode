@@ -37,20 +37,21 @@ import (
 var netprobeReceiverKotlin []byte
 
 var (
-	adbPath       = flag.String("android.adb", "adb", "path to adb")
-	apkPath       = flag.String("android.apk", os.Getenv("TAILSCALE_ANDROID_APK"), "path to Tailscale Android APK")
-	adbSerial     = flag.String("android.serial", os.Getenv("ANDROID_SERIAL"), "adb device serial")
-	androidGOARCH = flag.String("android.goarch", envDefault("TAILSCALE_ANDROID_GOARCH", runtime.GOARCH), "GOARCH for adb-pushed Android test binaries")
-	emulatorHost  = flag.String("android.emulator-host", "10.0.2.2", "host address reachable from the Android emulator")
-	derpHost      = flag.String("android.derp-host", os.Getenv("TAILSCALE_ANDROID_DERP_HOST"), "DERP/STUN host reachable from both Android and the in-test tsnet peer")
-	waitTimeout   = flag.Duration("android.wait", 2*time.Minute, "time to wait for Android to register with testcontrol")
+	adbPath        = flag.String("android.adb", "adb", "path to adb")
+	apkPath        = flag.String("android.apk", os.Getenv("PINNODE_ANDROID_APK"), "path to PinNode Android APK")
+	adbSerial      = flag.String("android.serial", os.Getenv("ANDROID_SERIAL"), "adb device serial")
+	androidGOARCH  = flag.String("android.goarch", envDefault("PINNODE_ANDROID_GOARCH", runtime.GOARCH), "GOARCH for adb-pushed Android test binaries")
+	emulatorHost   = flag.String("android.emulator-host", "10.0.2.2", "host address reachable from the Android emulator")
+	derpHost       = flag.String("android.derp-host", os.Getenv("PINNODE_ANDROID_DERP_HOST"), "DERP/STUN host reachable from both Android and the in-test tsnet peer")
+	androidPackage = flag.String("android.package", envDefault("PINNODE_ANDROID_PACKAGE", "com.lsy223622.pinnode.debug"), "Android application ID under test")
+	waitTimeout    = flag.Duration("android.wait", 2*time.Minute, "time to wait for Android to register with testcontrol")
 )
 
 const (
-	androidPackage    = "com.tailscale.ipn"
-	probePackage      = "com.tailscale.ipn.integrationprobe"
+	probePackage      = "com.lsy223622.pinnode.integrationprobe"
 	probeReceiver     = probePackage + "/.NetprobeReceiver"
-	loginAction       = "com.tailscale.ipn.integration.LOGIN"
+	ipnReceiver       = "com.tailscale.ipn.IPNReceiver"
+	loginAction       = "com.lsy223622.pinnode.integration.LOGIN"
 	authKey           = "tskey-integration-android"
 	debugKeystorePass = "android"
 )
@@ -60,7 +61,7 @@ func TestAndroidAuthKeyLogin(t *testing.T) {
 		t.Skip("Android integration test currently only runs on Linux")
 	}
 	if *apkPath == "" {
-		t.Skip("set --android.apk or TAILSCALE_ANDROID_APK to run")
+		t.Skip("set --android.apk or PINNODE_ANDROID_APK to run")
 	}
 	if _, err := exec.LookPath(*adbPath); err != nil {
 		t.Skipf("adb not found: %v", err)
@@ -125,15 +126,15 @@ func TestAndroidAuthKeyLogin(t *testing.T) {
 	probeAPKPath := buildProbeAPK(t, probePath)
 	adb.run(t, "install", "-r", "-t", probeAPKPath)
 	t.Cleanup(func() { adb.runAllowError(t, "uninstall", probePackage) })
-	t.Cleanup(func() { adb.runAllowError(t, "shell", "am", "force-stop", androidPackage) })
-	adb.run(t, "shell", "appops", "set", androidPackage, "ACTIVATE_VPN", "allow")
-	adb.run(t, "shell", "am", "force-stop", androidPackage)
-	adb.run(t, "shell", "pm", "clear", androidPackage)
+	t.Cleanup(func() { adb.runAllowError(t, "shell", "am", "force-stop", *androidPackage) })
+	adb.run(t, "shell", "appops", "set", *androidPackage, "ACTIVATE_VPN", "allow")
+	adb.run(t, "shell", "am", "force-stop", *androidPackage)
+	adb.run(t, "shell", "pm", "clear", *androidPackage)
 
 	adb.run(t,
 		"shell", "am", "broadcast",
 		"-a", loginAction,
-		"-n", androidPackage+"/.IPNReceiver",
+		"-n", *androidPackage+"/"+ipnReceiver,
 		"--include-stopped-packages",
 		"--es", "control_url", controlURL,
 		"--es", "auth_key", authKey,
@@ -166,11 +167,11 @@ func TestAndroidAuthKeyLogin(t *testing.T) {
 
 func buildAndroidProbe(t *testing.T) string {
 	t.Helper()
-	out := t.TempDir() + "/tailscale-android-netprobe"
+	out := t.TempDir() + "/pinnode-android-netprobe"
 	root := repoRoot(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, root+"/tool/go", "build", "-buildvcs=false", "-o", out, "./integration/androidvmtest/testnetprobe")
+	cmd := exec.CommandContext(ctx, "bash", root+"/tool/go", "build", "-buildvcs=false", "-o", out, "./integration/androidvmtest/testnetprobe")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
 		"GOOS=android",
@@ -190,9 +191,9 @@ func buildProbeAPK(t *testing.T, probePath string) string {
 	root := repoRoot(t)
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "AndroidManifest.xml")
-	if err := os.WriteFile(manifest, []byte(`<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.tailscale.ipn.integrationprobe">
+	if err := os.WriteFile(manifest, []byte(`<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.lsy223622.pinnode.integrationprobe">
     <uses-permission android:name="android.permission.INTERNET"/>
-    <application android:debuggable="true" android:extractNativeLibs="true" android:label="Tailscale Integration Probe">
+    <application android:debuggable="true" android:extractNativeLibs="true" android:label="PinNode Integration Probe">
         <receiver android:name=".NetprobeReceiver" android:exported="true"/>
     </application>
 </manifest>
@@ -203,7 +204,7 @@ func buildProbeAPK(t *testing.T, probePath string) string {
 	alignedAPK := filepath.Join(dir, "probe-aligned.apk")
 	signedAPK := filepath.Join(dir, "probe.apk")
 	keystore := filepath.Join(dir, "debug.keystore")
-	kotlinSrcDir := filepath.Join(dir, "kotlin", "com", "tailscale", "ipn", "integrationprobe")
+	kotlinSrcDir := filepath.Join(dir, "kotlin", "com", "lsy223622", "pinnode", "integrationprobe")
 	classesDir := filepath.Join(dir, "classes")
 	dexDir := filepath.Join(dir, "dex")
 	libDir := filepath.Join(dir, "apkroot", "lib", androidABI(t, *androidGOARCH))

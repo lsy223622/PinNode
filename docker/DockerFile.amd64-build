@@ -1,5 +1,5 @@
 # This is a Dockerfile for creating a build environment for
-# tailscale-android.
+# pinnode-android.
 
 FROM --platform=linux/amd64 eclipse-temurin:21-jdk-jammy
 
@@ -12,7 +12,7 @@ RUN mkdir -p \
     ${HOME} \
     /android-sdk \
     ${ANDROID_HOME} \
-    $HOME/tailscale-android
+    $HOME/pinnode-android
 
 # To enable running android tools such as aapt
 COPY scripts/docker-build-apt-get.sh /tmp
@@ -27,8 +27,8 @@ RUN \
     curl -L https://go.dev/dl/go1.26.6.linux-amd64.tar.gz | tar -C /usr/local -zxv && \
     ln -s /usr/local/go/bin/go /usr/bin
 
-RUN git config --global --add safe.directory $HOME/tailscale-android
-WORKDIR $HOME/tailscale-android
+RUN git config --global --add safe.directory $HOME/pinnode-android
+WORKDIR $HOME/pinnode-android
 
 COPY Makefile Makefile
 COPY android/gradle.properties android/gradle.properties
@@ -43,5 +43,5 @@ COPY android/gradle android/gradle
 RUN chmod 755 android/gradlew && \
     ./android/gradlew
 
-# Build the android app, bump the playstore version code, and make the tv release
-CMD make clean && make release && make release-tv
+# Build the installable phone/tablet release APK.
+CMD make clean && make release-apk

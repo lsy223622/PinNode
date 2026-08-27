@@ -12,8 +12,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tailscale/tailscale-android/libtailscale/ifaceparse"
-	rangescalc "github.com/tailscale/tailscale-android/libtailscale/ranges_calc"
+	"github.com/lsy223622/PinNode/libtailscale/ifaceparse"
+	rangescalc "github.com/lsy223622/PinNode/libtailscale/ranges_calc"
 	"github.com/tailscale/wireguard-go/tun"
 	"tailscale.com/net/dns"
 	"tailscale.com/net/netmon"

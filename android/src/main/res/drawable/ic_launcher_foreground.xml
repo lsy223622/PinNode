@@ -1,55 +1,24 @@
+<!-- Copyright (c) PinNode contributors
+     SPDX-License-Identifier: BSD-3-Clause -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
   <path
-      android:pathData="M43.242,39.37a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
+      android:pathData="M54,20 L30,72 L78,72 Z"
       android:fillColor="@android:color/transparent"
       android:strokeColor="#ffffff"
-      android:strokeWidth="2.016"/>
+      android:strokeWidth="5"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round" />
   <path
-      android:pathData="M57.872,39.37a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeWidth="2.016"/>
+      android:pathData="M62,20a8,8 0,1 1,-16 0a8,8 0,1 1,16 0z"
+      android:fillColor="#ffffff" />
   <path
-      android:pathData="M72.492,39.37a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeAlpha="0.4"
-      android:strokeWidth="2.016"/>
+      android:pathData="M38,72a8,8 0,1 1,-16 0a8,8 0,1 1,16 0z"
+      android:fillColor="#ffffff" />
   <path
-      android:pathData="M43.242,54a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeWidth="2.016"/>
-  <path
-      android:pathData="M57.872,54a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeWidth="2.016"/>
-  <path
-      android:pathData="M72.492,54a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeAlpha="0.4"
-      android:strokeWidth="2.016"/>
-  <path
-      android:pathData="M43.242,68.62a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeWidth="2.016"/>
-  <path
-      android:pathData="M57.872,68.62a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeAlpha="0.4"
-      android:strokeWidth="2.016"/>
-  <path
-      android:pathData="M72.492,68.62a3.867,3.867 0,1 0,-7.734 0a3.867,3.867 0,1 0,7.734 0z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeAlpha="0.4"
-      android:strokeWidth="2.016"/>
+      android:pathData="M86,72a8,8 0,1 1,-16 0a8,8 0,1 1,16 0z"
+      android:fillColor="#ffffff" />
 </vector>

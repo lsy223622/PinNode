@@ -42,7 +42,7 @@ Android 最低版本为 Android 13 / API 33。
 
 ```text
 make androidsdk
-make tailscale-debug
+make pinnode-debug
 ```
 
 Windows 下，在已生成 `android/libs/libtailscale.aar` 后也可以执行：

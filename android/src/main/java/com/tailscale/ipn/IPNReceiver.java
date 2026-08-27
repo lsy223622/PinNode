@@ -22,7 +22,7 @@ public class IPNReceiver extends BroadcastReceiver {
 
     public static final String INTENT_CONNECT_VPN = "com.tailscale.ipn.CONNECT_VPN";
     public static final String INTENT_DISCONNECT_VPN = "com.tailscale.ipn.DISCONNECT_VPN";
-    public static final String INTENT_INTEGRATION_LOGIN = "com.tailscale.ipn.integration.LOGIN";
+    public static final String INTENT_INTEGRATION_LOGIN = "com.lsy223622.pinnode.integration.LOGIN";
     private static final String INTENT_USE_EXIT_NODE = "com.tailscale.ipn.USE_EXIT_NODE";
 
     // Unique work names prevent connect/disconnect flapping from enqueuing a long backlog.

@@ -1,21 +1,21 @@
 {{/*
 
-This template is used to generate the license notices published at
-https://github.com/tailscale/tailscale/blob/main/licenses/android.md.
-Publishing is managed by the go-licenses GitHub Action.  Non-Go dependencies
-should be manually updated at the bottom of this file as needed.
+This template is used to generate the license notices distributed with PinNode.
+Non-Go dependencies should be manually updated at the bottom of this file as
+needed.
 
-*/}}# Tailscale for Android dependencies
+*/}}# PinNode Android dependency notices
 
-The following open source dependencies are used to build the [Tailscale Android
-Client][].  See also the dependencies in the [Tailscale CLI][].
+The following open source dependencies are used to build PinNode. The Android
+and Go code derived from [Tailscale Android source][] and [Tailscale Go source][]
+retains the upstream notices and licenses.
 
-[Tailscale Android Client]: https://github.com/tailscale/tailscale-android
-[Tailscale CLI]: ./tailscale.md
+[Tailscale Android source]: https://github.com/tailscale/tailscale-android
+[Tailscale Go source]: ./tailscale.md
 
 ## Go Packages
 
 {{ range . }}
  - [{{.Name}}](https://pkg.go.dev/{{.Name}}) ([{{.LicenseName}}]({{.LicenseURL}}))
 {{- end }}
- - [tailscale.com](https://pkg.go.dev/tailscale.com) ([BSD-3-Clause](https://github.com/tailscale/tailscale/blob/HEAD/LICENSE))
+ - [tailscale.com](https://pkg.go.dev/tailscale.com) ([BSD-3-Clause](https://github.com/tailscale/tailscale/blob/HEAD/LICENSE); see [Tailscale Go source])

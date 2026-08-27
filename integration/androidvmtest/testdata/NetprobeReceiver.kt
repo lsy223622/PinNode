@@ -6,7 +6,7 @@
 //
 // The receiver runs that APK's packaged Go netprobe binary from a real Android app process, then
 // writes the probe output to the app's private files directory for the Go test to read with adb.
-package com.tailscale.ipn.integrationprobe
+package com.lsy223622.pinnode.integrationprobe
 
 import android.content.BroadcastReceiver
 import android.content.BroadcastReceiver.PendingResult
