@@ -19,6 +19,7 @@ jobs:
     env:
       PINNODE_SERVER_URL: ${{ vars.PINNODE_SERVER_URL }}
       PINNODE_SERVER_NAME: ${{ vars.PINNODE_SERVER_NAME }}
+      PINNODE_SERVER_LOCKED: ${{ vars.PINNODE_SERVER_LOCKED }}
 
     steps:
       - name: Check out the release tag
@@ -26,6 +27,18 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
+
+      - name: Verify the release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^PINNODE_VERSION_NAME=//p' version.properties)"
+          test -n "$version"
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "Release tag $RELEASE_TAG does not match PinNode version v$version" >&2
+            exit 1
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
@@ -41,17 +54,35 @@ jobs:
       - name: Install Android SDK components
         run: make androidsdk
 
-      - name: Configure the production server
+      - name: Configure optional server defaults
         run: |
           set -euo pipefail
-          : "${PINNODE_SERVER_URL:?Set the release environment variable PINNODE_SERVER_URL}"
-          : "${PINNODE_SERVER_NAME:?Set the release environment variable PINNODE_SERVER_NAME}"
+          server_url="${PINNODE_SERVER_URL:-}"
+          server_name="${PINNODE_SERVER_NAME:-}"
+          server_locked="${PINNODE_SERVER_LOCKED:-false}"
+          if [[ "${GITHUB_REPOSITORY:-}" == "lsy223622/PinNode" ]]; then
+            server_url=""
+            server_name=""
+            server_locked="false"
+          fi
+          if [[ "$server_locked" != "true" && "$server_locked" != "false" ]]; then
+            echo "PINNODE_SERVER_LOCKED must be true or false" >&2
+            exit 1
+          fi
+          if [[ "$server_locked" == "true" && ( -z "$server_url" || -z "$server_name" ) ]]; then
+            echo "A locked build requires PINNODE_SERVER_URL and PINNODE_SERVER_NAME" >&2
+            exit 1
+          fi
           sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
           {
             printf 'sdk.dir=%s\n' "$sdk_dir"
-            printf 'pinnode.serverUrl=%s\n' "$PINNODE_SERVER_URL"
-            printf 'pinnode.serverName=%s\n' "$PINNODE_SERVER_NAME"
-            printf 'pinnode.serverLocked=true\n'
+            if [[ -n "$server_url" ]]; then
+              printf 'pinnode.serverUrl=%s\n' "$server_url"
+            fi
+            if [[ -n "$server_name" ]]; then
+              printf 'pinnode.serverName=%s\n' "$server_name"
+            fi
+            printf 'pinnode.serverLocked=%s\n' "$server_locked"
           } > android/local.properties
 
       - name: Clean generated files
@@ -100,14 +131,21 @@ jobs:
           : "${JKS_KEY_PASSWORD:?Set PINNODE_KEY_PASSWORD in the release environment}"
           make release-apk
 
-      - name: Upload the APK and checksum to the GitHub release
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
           sha256sum pinnode-release.apk > pinnode-release.apk.sha256
-          gh release upload "$RELEASE_TAG" pinnode-release.apk pinnode-release.apk.sha256 --clobber
+          gh release upload "$RELEASE_TAG" \
+            pinnode-release.apk \
+            pinnode-release.apk.sha256 \
+            LICENSE \
+            NOTICE \
+            THIRD_PARTY_NOTICES.md \
+            PATENTS \
+            --clobber
 
       - name: Remove the temporary signing keystore
         if: always()

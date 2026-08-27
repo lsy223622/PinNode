@@ -27,6 +27,10 @@ type fakeTailscale struct {
 	createAuthKeyErr   error
 }
 
+func fakeTailscaleKey(parts ...string) string {
+	return "tskey-" + strings.Join(parts, "-")
+}
+
 func (f *fakeTailscale) ExchangeOAuthToken(context.Context, string, string) (OAuthAccessToken, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -38,7 +42,7 @@ func (f *fakeTailscale) ExchangeOAuthToken(context.Context, string, string) (OAu
 		return f.oauthToken, nil
 	}
 	return OAuthAccessToken{
-		Token: "tskey-oauth-test", ExpiresAt: time.Now().Add(time.Hour),
+		Token: fakeTailscaleKey("oauth", "test"), ExpiresAt: time.Now().Add(time.Hour),
 		Scopes: []string{"auth_keys", "devices:core", "devices:routes"},
 	}, nil
 }
@@ -53,7 +57,7 @@ func (f *fakeTailscale) CreateAuthKey(_ context.Context, accessToken string, _ t
 	}
 	f.ephemeralRequested = append(f.ephemeralRequested, ephemeral)
 	f.accessTokens = append(f.accessTokens, accessToken)
-	return AuthKey{Secret: "tskey-test", ID: "k-test"}, nil
+	return AuthKey{Secret: fakeTailscaleKey("test"), ID: "k-test"}, nil
 }
 
 func (f *fakeTailscale) DeleteAuthKey(_ context.Context, _ string, id string) error {
@@ -130,7 +134,7 @@ func installTestAdminAndCredential(t *testing.T, service *Service, store *Store)
 		t.Fatal(err)
 	}
 	credentialID := "test-credential"
-	ciphertext, err := service.cipher.Seal(credentialID, "tskey-api-test")
+	ciphertext, err := service.cipher.Seal(credentialID, fakeTailscaleKey("api", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +208,7 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 	if err := json.Unmarshal(startResponse.Body.Bytes(), &startResult); err != nil {
 		t.Fatal(err)
 	}
-	if startResult.SessionID == "" || startResult.SessionToken == "" || startResult.AuthKey != "tskey-test" {
+	if startResult.SessionID == "" || startResult.SessionToken == "" || startResult.AuthKey != fakeTailscaleKey("test") {
 		t.Fatalf("会话响应缺少必要字段: %+v", startResult)
 	}
 	if startResult.SyncIntervalSeconds <= 0 {
@@ -219,7 +223,7 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 		fake.mu.Unlock()
 		t.Fatalf("默认节点不应使用 ephemeral auth key: %v", fake.ephemeralRequested)
 	}
-	if len(fake.accessTokens) != 1 || fake.accessTokens[0] != "tskey-api-test" {
+	if len(fake.accessTokens) != 1 || fake.accessTokens[0] != fakeTailscaleKey("api", "test") {
 		fake.mu.Unlock()
 		t.Fatalf("供应未使用所选的加密凭据: %v", fake.accessTokens)
 	}

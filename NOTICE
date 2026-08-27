@@ -1,0 +1,18 @@
+PinNode
+Copyright (c) 2026 PinNode contributors.
+
+PinNode's original code is distributed under the GNU General Public License, version 3
+(GPLv3), in LICENSE.
+
+This project contains code derived from Tailscale for Android and Tailscale
+core. Their copyright notices and BSD 3-Clause licenses are reproduced in
+THIRD_PARTY_NOTICES.md and retained in the corresponding source files. The
+dependency inventories for the vendored Tailscale snapshot are under
+third_party/tailscale/licenses/.
+
+PATENTS is the additional patent grant supplied by Tailscale for its
+implementation. It does not change the license of original PinNode code.
+
+Tailscale and WireGuard are trademarks of their respective owners. PinNode is
+an independent project and is not affiliated with or endorsed by Tailscale
+Inc. or the WireGuard project.

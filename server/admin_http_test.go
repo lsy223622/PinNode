@@ -13,6 +13,7 @@ import (
 )
 
 func TestFirstRunSetupLoginAndEncryptedCredential(t *testing.T) {
+	testToken := fakeTailscaleKey("api", "test-secret")
 	config := testServiceConfig()
 	store := NewStore()
 	defer store.Close()
@@ -53,7 +54,7 @@ func TestFirstRunSetupLoginAndEncryptedCredential(t *testing.T) {
 
 	credentialRequest := localRequest(
 		http.MethodPost, "/v1/tailscale-credentials",
-		strings.NewReader(`{"name":"家庭 Tailnet","token":"tskey-api-test-secret"}`),
+		strings.NewReader(`{"name":"家庭 Tailnet","token":"`+testToken+`"}`),
 	)
 	credentialRequest.AddCookie(cookie)
 	credentialRequest.Header.Set("X-CSRF-Token", authenticated.CSRFToken)
@@ -69,11 +70,11 @@ func TestFirstRunSetupLoginAndEncryptedCredential(t *testing.T) {
 		t.Fatalf("保存凭据响应无效: id=%q err=%v", saved.ID, err)
 	}
 	stored, ok, err := store.GetTailscaleCredential(saved.ID)
-	if err != nil || !ok || strings.Contains(string(stored.Ciphertext), "tskey-api-test-secret") {
+	if err != nil || !ok || strings.Contains(string(stored.Ciphertext), testToken) {
 		t.Fatalf("Tailscale 令牌未安全加密: ok=%v err=%v ciphertext=%q", ok, err, stored.Ciphertext)
 	}
 	plaintext, err := service.cipher.Open(stored.ID, stored.Ciphertext)
-	if err != nil || plaintext != "tskey-api-test-secret" {
+	if err != nil || plaintext != testToken {
 		t.Fatalf("加密凭据不能正确解密: token=%q err=%v", plaintext, err)
 	}
 
@@ -83,7 +84,7 @@ func TestFirstRunSetupLoginAndEncryptedCredential(t *testing.T) {
 	service.Handler().ServeHTTP(listResponse, listRequest)
 	if listResponse.Code != http.StatusOK ||
 		!strings.Contains(listResponse.Body.String(), "家庭 Tailnet") ||
-		strings.Contains(listResponse.Body.String(), "tskey-api-test-secret") {
+		strings.Contains(listResponse.Body.String(), testToken) {
 		t.Fatalf("凭据列表泄露或缺少数据: %d %s", listResponse.Code, listResponse.Body.String())
 	}
 
@@ -105,6 +106,7 @@ func TestFirstRunSetupLoginAndEncryptedCredential(t *testing.T) {
 }
 
 func TestOAuthClientCredentialIsEncryptedAndAccessTokenIsCached(t *testing.T) {
+	clientSecret := fakeTailscaleKey("client", "secret")
 	config := testServiceConfig()
 	store := NewStore()
 	defer store.Close()
@@ -114,7 +116,7 @@ func TestOAuthClientCredentialIsEncryptedAndAccessTokenIsCached(t *testing.T) {
 
 	request := localRequest(
 		http.MethodPost, "/v1/tailscale-credentials",
-		strings.NewReader(`{"name":"长期 OAuth","type":"oauth_client","clientId":"client-id","clientSecret":"tskey-client-secret"}`),
+		strings.NewReader(`{"name":"长期 OAuth","type":"oauth_client","clientId":"client-id","clientSecret":"`+clientSecret+`"}`),
 	)
 	request.AddCookie(&http.Cookie{Name: adminSessionCookie, Value: authentication.CookieValue})
 	request.Header.Set("X-CSRF-Token", authentication.CSRFToken)
@@ -134,16 +136,16 @@ func TestOAuthClientCredentialIsEncryptedAndAccessTokenIsCached(t *testing.T) {
 	stored, ok, err := store.GetTailscaleCredential(saved.ID)
 	if err != nil || !ok || stored.Kind != TailscaleCredentialOAuthClient ||
 		strings.Contains(string(stored.Ciphertext), "client-id") ||
-		strings.Contains(string(stored.Ciphertext), "tskey-client-secret") {
+		strings.Contains(string(stored.Ciphertext), clientSecret) {
 		t.Fatalf("OAuth client 未正确加密: %#v ok=%v err=%v", stored, ok, err)
 	}
 	plaintext, err := service.cipher.Open(stored.ID, stored.Ciphertext)
-	if err != nil || !strings.Contains(plaintext, "client-id") || !strings.Contains(plaintext, "tskey-client-secret") {
+	if err != nil || !strings.Contains(plaintext, "client-id") || !strings.Contains(plaintext, clientSecret) {
 		t.Fatalf("OAuth client 密文不能正确解密: plaintext=%q err=%v", plaintext, err)
 	}
 	for range 2 {
 		token, err := service.credentialToken(t.Context(), saved.ID)
-		if err != nil || token != "tskey-oauth-test" {
+		if err != nil || token != fakeTailscaleKey("oauth", "test") {
 			t.Fatalf("读取 OAuth access token 错误: token=%q err=%v", token, err)
 		}
 	}
@@ -158,12 +160,12 @@ func TestOAuthClientCredentialIsEncryptedAndAccessTokenIsCached(t *testing.T) {
 	service.oauthMu.Unlock()
 	fake.mu.Lock()
 	fake.oauthToken = OAuthAccessToken{
-		Token: "tskey-oauth-refreshed", ExpiresAt: time.Now().Add(time.Hour),
+		Token: fakeTailscaleKey("oauth", "refreshed"), ExpiresAt: time.Now().Add(time.Hour),
 		Scopes: []string{"auth_keys", "devices:core", "devices:routes"},
 	}
 	fake.mu.Unlock()
 	refreshed, err := service.credentialToken(t.Context(), saved.ID)
-	if err != nil || refreshed != "tskey-oauth-refreshed" {
+	if err != nil || refreshed != fakeTailscaleKey("oauth", "refreshed") {
 		t.Fatalf("临近过期的 OAuth token 没有刷新: token=%q err=%v", refreshed, err)
 	}
 	fake.mu.Lock()
@@ -172,7 +174,7 @@ func TestOAuthClientCredentialIsEncryptedAndAccessTokenIsCached(t *testing.T) {
 	if oauthCalls != 2 {
 		t.Fatalf("OAuth token 刷新调用次数错误: calls=%d", oauthCalls)
 	}
-	if strings.Contains(response.Body.String(), "client-id") || strings.Contains(response.Body.String(), "tskey-client-secret") {
+	if strings.Contains(response.Body.String(), "client-id") || strings.Contains(response.Body.String(), clientSecret) {
 		t.Fatalf("OAuth client 响应泄露 secret: %s", response.Body.String())
 	}
 }
@@ -182,7 +184,7 @@ func TestOAuthClientRequiresPinNodeScopes(t *testing.T) {
 	store := NewStore()
 	defer store.Close()
 	fake := &fakeTailscale{oauthToken: OAuthAccessToken{
-		Token: "tskey-oauth-limited", ExpiresAt: time.Now().Add(time.Hour), Scopes: []string{"auth_keys"},
+		Token: fakeTailscaleKey("oauth", "limited"), ExpiresAt: time.Now().Add(time.Hour), Scopes: []string{"auth_keys"},
 	}}
 	service := NewService(config, store, fake, nil)
 	authentication, _ := installTestAdminAndCredential(t, service, store)

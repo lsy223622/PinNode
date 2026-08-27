@@ -19,15 +19,16 @@ func TestPasswordHashUsesArgon2idAndRejectsWrongPassword(t *testing.T) {
 }
 
 func TestCredentialCipherBindsCiphertextToCredentialID(t *testing.T) {
+	testToken := fakeTailscaleKey("api", "secret")
 	cipher, err := NewCredentialCipher([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := cipher.Seal("credential-a", "tskey-api-secret")
+	encoded, err := cipher.Seal("credential-a", testToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plaintext, err := cipher.Open("credential-a", encoded); err != nil || plaintext != "tskey-api-secret" {
+	if plaintext, err := cipher.Open("credential-a", encoded); err != nil || plaintext != testToken {
 		t.Fatalf("合法密文无法解密: plaintext=%q err=%v", plaintext, err)
 	}
 	if _, err := cipher.Open("credential-b", encoded); err == nil {

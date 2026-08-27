@@ -47,14 +47,9 @@ android {
         minSdkVersion 33
         targetSdkVersion androidApiLevel
 
-        // VERSION_CODE_BASE is minutes since the Unix epoch, times 10. The
-        // final digit is reserved for the platform: 0 for phone/tablet and 1
-        // for Android TV. Release builds pass VERSION_CODE_BASE from the
-        // Makefile so both variants share the same base. Other builds fall
-        // back to the current time so local/debug Gradle invocations continue
-        // to work without extra arguments.
-        versionCode computeVersionCode()
-        versionName getVersionProperty("VERSION_LONG")
+        def pinnodeVersionName = getPinNodeVersionName()
+        versionCode computeVersionCode(pinnodeVersionName)
+        versionName pinnodeVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // This setting, which defaults to 'true', will cause Tailscale to fall
         // back to the Google DNS servers if it cannot determine what the
@@ -205,29 +200,36 @@ def buildConfigString(value) {
 }
 
 
-def getVersionProperty(key) {
-    // tailscale.version is created / updated by the makefile, it is in a loosely
-    // Makfile/envfile format, which is also loosely a properties file format.
-    //      make tailscale.version
+def getPinNodeVersionName() {
     def versionProps = new Properties()
-    versionProps.load(project.file('../tailscale.version').newDataInputStream())
-    return versionProps.getProperty(key).replaceAll('^"|"$', '')
+    versionProps.load(project.file('../version.properties').newDataInputStream())
+    def versionName = versionProps.getProperty('PINNODE_VERSION_NAME')
+    if (versionName == null || !(versionName ==~ /\d+\.\d+\.\d+/)) {
+        throw new GradleException('PINNODE_VERSION_NAME must be a numeric major.minor.patch version')
+    }
+    return versionName
 }
 
-def computeVersionCode() {
-    def baseProperty = project.findProperty('VERSION_CODE_BASE')
+def computeVersionCode(versionName) {
+    def parts = versionName.tokenize('.').collect { it as long }
+    def major = parts[0]
+    def minor = parts[1]
+    def patch = parts[2]
+    if (major > 1800 || minor > 99 || patch > 999) {
+        throw new GradleException('PinNode version components exceed versionCode encoding limits')
+    }
+    if (major == 0 && minor == 0 && patch == 0) {
+        throw new GradleException('PinNode version must be greater than 0.0.0')
+    }
 
-    // Direct/local Gradle invocations may not come through the Makefile. Keep
-    // those builds working by deriving a monotonic base from wall-clock time.
-    def base = baseProperty != null
-            ? baseProperty as long
-            : (System.currentTimeMillis() / 60000L) * 10L
-
-    // 0 for Android, 1 for Android TV. This keeps the two binaries distinguishable
-    // in the Play Store while sharing a release base.
+    // The 300,000,000 migration base keeps v0.1.0 above pre-release builds that
+    // encoded wall-clock minutes. The final digit is reserved for the platform.
     def platform = isTV() ? 1 : 0
-
-    return (base + platform) as int
+    def code = 300_000_000L + major * 1_000_000L + minor * 10_000L + patch * 10L + platform
+    if (code > 2_100_000_000L) {
+        throw new GradleException('PinNode versionCode exceeds the Android limit')
+    }
+    return code as int
 }
 
 def isTV() {

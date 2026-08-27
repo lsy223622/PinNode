@@ -44,6 +44,7 @@ ANDROID_BUILD_TOOLS_VERSION := $(shell grep '^androidBuildToolsVersion=' android
 
 ANDROID_APPLICATION_ID := com.lsy223622.pinnode
 ANDROID_DEBUG_APPLICATION_ID := $(ANDROID_APPLICATION_ID).debug
+PINNODE_VERSION_NAME := $(shell sed -n 's/^PINNODE_VERSION_NAME=//p' version.properties)
 
 DEBUG_APK := pinnode-debug.apk
 RELEASE_APK := pinnode-release.apk
@@ -51,15 +52,6 @@ RELEASE_APK_UNSIGNED := android/build/outputs/apk/release/android-release-unsign
 RELEASE_APK_ALIGNED := android/build/outputs/apk/release/android-release-aligned.apk
 RELEASE_AAB := pinnode-release.aab
 RELEASE_TV_AAB := pinnode-tv-release.aab
-
-# Base Android versionCode for this make invocation. The value is minutes since
-# the Unix epoch, times 10; the final digit is reserved for the platform
-# (0 = phone/tablet, 1 = Android TV). An explicitly supplied value wins so the
-# outer builder can keep phone and TV on the same base.
-ifndef VERSION_CODE_BASE
-VERSION_CODE_BASE := $(shell echo $$(( $$(date +%s) / 60 * 10 )))
-endif
-export VERSION_CODE_BASE
 
 # Define output filenames.
 LIBTAILSCALE_AAR := android/libs/libtailscale.aar
@@ -190,22 +182,22 @@ gradle-dependencies: $(shell find android -type f -not -path "android/build/*" -
 
 $(RELEASE_AAB): version gradle-dependencies
 	@echo "Building release AAB"
-	(cd android && ./gradlew test bundleRelease -PVERSION_CODE_BASE=$(VERSION_CODE_BASE))
+	(cd android && ./gradlew test bundleRelease)
 	install -C ./android/build/outputs/bundle/release/android-release.aab $@
 
 $(RELEASE_APK): version gradle-dependencies
 	@echo "Building release APK"
-	(cd android && ./gradlew test assembleRelease -PVERSION_CODE_BASE=$(VERSION_CODE_BASE))
+	(cd android && ./gradlew test assembleRelease)
 	"$(ANDROID_HOME)/build-tools/$(ANDROID_BUILD_TOOLS_VERSION)/zipalign" -f -p 4 "$(RELEASE_APK_UNSIGNED)" "$(RELEASE_APK_ALIGNED)"
 	"$(ANDROID_HOME)/build-tools/$(ANDROID_BUILD_TOOLS_VERSION)/apksigner" sign --ks "$(JKS_PATH)" --ks-key-alias "$(JKS_ALIAS)" --ks-pass env:JKS_PASSWORD --key-pass env:JKS_KEY_PASSWORD --out "$@" "$(RELEASE_APK_ALIGNED)"
 	"$(ANDROID_HOME)/build-tools/$(ANDROID_BUILD_TOOLS_VERSION)/apksigner" verify --verbose "$@"
 
-# PLATFORM=tv signals to Gradle that we should build for AndroidTV. Gradle
-# reserves the last digit of VERSION_CODE_BASE for the platform, so phone/tablet
-# builds use ...0 and TV builds use ...1.
+# PLATFORM=tv signals to Gradle that we should build for Android TV. Gradle
+# reserves the last versionCode digit for the platform (0 = phone/tablet,
+# 1 = Android TV).
 $(RELEASE_TV_AAB): version gradle-dependencies
 	@echo "Building TV release AAB"
-	(cd android && ./gradlew test bundleRelease -PVERSION_CODE_BASE=$(VERSION_CODE_BASE) -PPLATFORM=tv)
+	(cd android && ./gradlew test bundleRelease -PPLATFORM=tv)
 	install -C ./android/build/outputs/bundle/release/android-release.aab $@
 
 pinnode-application-test.apk: version gradle-dependencies
@@ -331,8 +323,8 @@ androidpath:
 	@echo 'export PATH=$(ANDROID_HOME)/cmdline-tools/latest/bin:$(ANDROID_HOME)/platform-tools:$$PATH'
 
 .PHONY: tag_release
-tag_release: tailscale.version ## Tag the current commit with the current version
-	source tailscale.version && git tag -a "$${VERSION_LONG}" -m "OSS and Version updated to $${VERSION_LONG}"
+tag_release: version.properties ## Tag the current commit with the PinNode version
+	git tag -a "v$(PINNODE_VERSION_NAME)" -m "PinNode v$(PINNODE_VERSION_NAME)"
 
 .PHONY: bumposs ## Bump to the latest oss and update the versions.
 bumposs: update-oss tailscale.version
@@ -340,7 +332,6 @@ bumposs: update-oss tailscale.version
 	@# Regenerate tailscale.version so VERSION_LONG's -g<hash> points at the
 	@# bump commit we just created, not its parent.
 	$(MKVERSION) > tailscale.version
-	source tailscale.version && git tag -a "$${VERSION_LONG}" -m "OSS and Version updated to $${VERSION_LONG}"
 
 .PHONY: update-oss ## Update the tailscale.com go module
 update-oss:
@@ -456,7 +447,7 @@ DOCKER_RUN_VOLS := -v $(CURDIR):/build/pinnode-android -v $(DOCKER_ANDROID_DIR):
 
 .PHONY: docker-run-build
 docker-run-build: clean jarsign-env docker-build-image docker-android-dir ## Runs the docker image for the android build environment and builds the release APK
-	@docker run --rm $(DOCKER_RUN_VOLS) --env JKS_PASSWORD=$(JKS_PASSWORD) --env JKS_KEY_PASSWORD=$(JKS_KEY_PASSWORD) --env JKS_ALIAS=$(JKS_ALIAS) --env JKS_PATH=$(JKS_PATH) --env VERSION_CODE_BASE=$(VERSION_CODE_BASE) $(DOCKER_IMAGE)
+	@docker run --rm $(DOCKER_RUN_VOLS) --env JKS_PASSWORD=$(JKS_PASSWORD) --env JKS_KEY_PASSWORD=$(JKS_KEY_PASSWORD) --env JKS_ALIAS=$(JKS_ALIAS) --env JKS_PATH=$(JKS_PATH) $(DOCKER_IMAGE)
 
 .PHONY: docker-pinnode-debug
 docker-pinnode-debug: docker-build-image docker-android-dir ## Build pinnode-debug.apk inside the docker env (stable signer across runs)

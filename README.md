@@ -37,6 +37,9 @@ SNAT/有状态过滤和当前 Android backend 支持的其他偏好。手机端�
 ## 构建 Android 应用
 
 Android 最低版本为 Android 13 / API 33。
+当前应用版本为 `0.1.0`；版本名与确定性的 `versionCode` 规则见
+[`docs/releasing.md`](docs/releasing.md)。正式 application ID 固定为
+`com.lsy223622.pinnode`。
 
 上游 Android 构建入口仍可使用：
 
@@ -53,8 +56,8 @@ cd android
 ```
 
 开发构建可复制 `android/local.properties.example` 为被 Git 忽略的
-`android/local.properties`。可编辑服务器构建只设置初始 URL；固定服务器构建同时
-设置：
+`android/local.properties`。公开 APK 不写入默认服务器且保持服务器可编辑；固定服务器
+构建同时设置：
 
 ```properties
 pinnode.serverUrl=https://pinnode.example.com
@@ -67,13 +70,14 @@ Debug 构建可以临时使用同一 LAN 内电脑的 HTTP 地址；Release 构�
 
 ## GitHub Release APK
 
-`.github/workflows/release-apk.yml` 只在 GitHub Release 被发布时运行，并检出该 Release
-对应的 tag。它会执行格式检查、Go 测试、Android 单元测试，使用 `apksigner` 生成签名
-APK 和 SHA-256 校验文件，再上传到该 Release；普通 push 或 commit 不会冻结版本，也
-不会触发发布构建。
+`.github/workflows/release-apk.yml` 只在 GitHub Release 被发布时运行，并检出与
+`version.properties` 匹配的 `v<version>` tag。它会执行格式检查、Go 测试、Android
+单元测试，使用 `apksigner` 生成签名 APK 和 SHA-256 校验文件，再上传到该 Release；
+普通 push 或 commit 不会冻结版本，也不会触发发布构建。
 
-签名配置不进入仓库，具体发布权限由 GitHub 仓库管理员配置。Release 产物是可直接安装的
-`pinnode-release.apk`，不是 AAB。
+签名配置不进入仓库，规范仓库的公开工作流会忽略服务器变量，不写入或锁定服务器。
+Release 产物是可直接安装的 `pinnode-release.apk`，不是 AAB。签名 secrets、私有 fork
+的可选服务器变量和发布步骤见 [`docs/releasing.md`](docs/releasing.md)。
 
 ## 运行配置下发服务
 
@@ -123,3 +127,10 @@ PinNode 复用官方 backend 的 tailnet 数据面和 DNS/路由能力，但它�
 本仓库基于 Tailscale Android commit
 `0867f01687a3955f7c0b5c6c62b236b997d68601` 和匹配的 core snapshot
 `25877455e79d9e3ebd5e99200ca86fd62bcc0ed9`。
+
+## 许可证与安全报告
+
+PinNode 原创代码采用 [GNU General Public License v3.0 (GPLv3)](LICENSE)。上游版权、第三方依赖、专利授权
+和商标说明分别见 [NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+与 [PATENTS](PATENTS)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要提交公开
+issue。

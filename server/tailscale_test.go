@@ -9,6 +9,7 @@ import (
 )
 
 func TestExchangeOAuthTokenUsesClientCredentialsForm(t *testing.T) {
+	testToken := fakeTailscaleKey("oauth", "short")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/oauth/token" {
 			t.Errorf("OAuth token 请求错误: %s %s", r.Method, r.URL.Path)
@@ -26,7 +27,7 @@ func TestExchangeOAuthTokenUsesClientCredentialsForm(t *testing.T) {
 			t.Error("OAuth client secret 不应进入 URL 或认证头")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"tskey-oauth-short","token_type":"Bearer","expires_in":3600,"scope":"auth_keys devices:core devices:routes"}`))
+		_, _ = w.Write([]byte(`{"access_token":"` + testToken + `","token_type":"Bearer","expires_in":3600,"scope":"auth_keys devices:core devices:routes"}`))
 	}))
 	defer server.Close()
 
@@ -36,18 +37,19 @@ func TestExchangeOAuthTokenUsesClientCredentialsForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.Token != "tskey-oauth-short" || len(token.Scopes) != 3 ||
+	if token.Token != testToken || len(token.Scopes) != 3 ||
 		token.ExpiresAt.Before(before.Add(59*time.Minute)) {
 		t.Fatalf("OAuth token 响应解析错误: %#v", token)
 	}
 }
 
 func TestValidateCredentialUsesBearerHeaderAndConfiguredTailnet(t *testing.T) {
+	testToken := fakeTailscaleKey("api", "test-secret")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v2/tailnet/-/keys" {
 			t.Errorf("验证凭据请求错误: %s %s", r.Method, r.URL.Path)
 		}
-		if authorization := r.Header.Get("Authorization"); authorization != "Bearer tskey-api-test-secret" {
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer "+testToken {
 			t.Errorf("验证凭据认证头错误: %q", authorization)
 		}
 		if r.URL.RawQuery != "" || r.URL.User != nil {
@@ -59,17 +61,19 @@ func TestValidateCredentialUsesBearerHeaderAndConfiguredTailnet(t *testing.T) {
 	defer server.Close()
 
 	client := NewTailscaleClient(Config{TailscaleBaseURL: server.URL, TailscaleTailnet: "-"})
-	if err := client.ValidateCredential(t.Context(), "tskey-api-test-secret"); err != nil {
+	if err := client.ValidateCredential(t.Context(), testToken); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCreateAuthKeyUsesManagedDeviceTag(t *testing.T) {
+	testAccessToken := fakeTailscaleKey("oauth", "test")
+	testAuthKey := fakeTailscaleKey("auth", "test")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/tailnet/-/keys" {
 			t.Errorf("创建 auth key 请求错误: %s %s", r.Method, r.URL.Path)
 		}
-		if authorization := r.Header.Get("Authorization"); authorization != "Bearer tskey-oauth-test" {
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer "+testAccessToken {
 			t.Errorf("创建 auth key 认证头错误: %q", authorization)
 		}
 		var payload struct {
@@ -89,12 +93,12 @@ func TestCreateAuthKeyUsesManagedDeviceTag(t *testing.T) {
 			t.Errorf("auth key tag = %v, want %q", payload.Capabilities.Devices.Create.Tags, managedDeviceTag)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"key":"tskey-auth-test","id":"key-test"}`))
+		_, _ = w.Write([]byte(`{"key":"` + testAuthKey + `","id":"key-test"}`))
 	}))
 	defer server.Close()
 
 	client := NewTailscaleClient(Config{TailscaleBaseURL: server.URL, TailscaleTailnet: "-"})
-	if _, err := client.CreateAuthKey(t.Context(), "tskey-oauth-test", 5*time.Minute, false); err != nil {
+	if _, err := client.CreateAuthKey(t.Context(), testAccessToken, 5*time.Minute, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -118,7 +122,7 @@ func TestSetDeviceRoutesEncodesEmptyArray(t *testing.T) {
 	defer server.Close()
 
 	client := NewTailscaleClient(Config{TailscaleBaseURL: server.URL, TailscaleTailnet: "-"})
-	if err := client.SetDeviceRoutes(t.Context(), "tskey-api-test", "node-test", nil); err != nil {
+	if err := client.SetDeviceRoutes(t.Context(), fakeTailscaleKey("api", "test"), "node-test", nil); err != nil {
 		t.Fatal(err)
 	}
 }
