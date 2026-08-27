@@ -110,7 +110,6 @@ PinNode 复用官方 backend 的 tailnet 数据面和 DNS/路由能力，但它�
 - [`server/README.md`](server/README.md)
 - [`docs/architecture.md`](docs/architecture.md)
 - [`docs/known-limitations.md`](docs/known-limitations.md)
-- [`docs/test-results.md`](docs/test-results.md)
 
 本仓库基于 Tailscale Android commit
 `0867f01687a3955f7c0b5c6c62b236b997d68601` 和匹配的 core snapshot

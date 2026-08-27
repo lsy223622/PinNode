@@ -654,8 +654,8 @@ components:
           type: array
           items: {type: string}
         sessionId: {type: string}
-        sessionToken: {type: string, writeOnly: true}
-        authKey: {type: string, writeOnly: true}
+        sessionToken: {type: string, readOnly: true}
+        authKey: {type: string, readOnly: true}
         provisioningHostname: {type: string}
         configRevision: {type: integer, minimum: 1}
         syncIntervalSeconds: {type: integer, minimum: 1}
