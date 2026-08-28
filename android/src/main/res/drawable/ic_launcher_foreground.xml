@@ -34,11 +34,11 @@
       />
   <path
       android:pathData="M44.25,68.62a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
-      android:fillColor="#ffffff"
+      android:fillColor="@color/pinnode_launcher_custom_server_dot"
       />
   <path
       android:pathData="M58.88,68.62a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
-      android:fillColor="#ffffff"
+      android:fillColor="@color/pinnode_launcher_debug_dot"
       android:fillAlpha="0.4"
       />
   <path

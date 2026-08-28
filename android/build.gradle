@@ -40,10 +40,16 @@ android {
         def pinnodeServerUrl = getLocalProperty("pinnode.serverUrl", "")
         def pinnodeServerName = getLocalProperty("pinnode.serverName", "")
         def pinnodeServerLocked = getLocalProperty("pinnode.serverLocked", "false")
+        def pinnodeHasCustomServer = !pinnodeServerUrl.trim().isEmpty()
         if (pinnodeServerLocked.toBoolean() && (pinnodeServerUrl.trim().isEmpty() || pinnodeServerName.trim().isEmpty())) {
             throw new GradleException("A locked PinNode build requires pinnode.serverUrl and pinnode.serverName")
         }
         applicationId "com.lsy223622.pinnode"
+        if (pinnodeHasCustomServer) {
+            applicationIdSuffix ".custom"
+        }
+        resValue "color", "pinnode_launcher_custom_server_dot", pinnodeHasCustomServer ? "#4B70CC" : "#FFFFFF"
+        resValue "color", "pinnode_launcher_debug_dot", "#FFFFFF"
         minSdkVersion 33
         targetSdkVersion androidApiLevel
 
@@ -100,6 +106,7 @@ android {
         }
         debug {
             applicationIdSuffix ".debug"
+            resValue "color", "pinnode_launcher_debug_dot", "#FFC107"
             manifestPlaceholders.leanbackRequired = isTV()
         }
         release {

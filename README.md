@@ -38,8 +38,9 @@ SNAT/有状态过滤和当前 Android backend 支持的其他偏好。手机端�
 
 Android 最低版本为 Android 13 / API 33。
 当前应用版本为 `0.1.0`；版本名与确定性的 `versionCode` 规则见
-[`docs/releasing.md`](docs/releasing.md)。正式 application ID 固定为
-`com.lsy223622.pinnode`。
+[`docs/releasing.md`](docs/releasing.md)。基础 application ID 为
+`com.lsy223622.pinnode`；配置自定义服务器时追加 `.custom`，Debug 构建追加
+`.debug`，两项同时满足时为 `com.lsy223622.pinnode.custom.debug`。
 
 上游 Android 构建入口仍可使用：
 

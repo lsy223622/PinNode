@@ -43,7 +43,9 @@ endif
 ANDROID_BUILD_TOOLS_VERSION := $(shell grep '^androidBuildToolsVersion=' android/gradle.properties | cut -d'=' -f2)
 
 ANDROID_APPLICATION_ID := com.lsy223622.pinnode
-ANDROID_DEBUG_APPLICATION_ID := $(ANDROID_APPLICATION_ID).debug
+PINNODE_CUSTOM_SERVER := $(shell sed -n '/^[[:space:]]*pinnode\.serverUrl[[:space:]]*=[[:space:]]*[^[:space:]]/s/.*/1/p' android/local.properties 2>/dev/null)
+ANDROID_CUSTOM_APPLICATION_SUFFIX := $(if $(PINNODE_CUSTOM_SERVER),.custom,)
+ANDROID_DEBUG_APPLICATION_ID := $(ANDROID_APPLICATION_ID)$(ANDROID_CUSTOM_APPLICATION_SUFFIX).debug
 PINNODE_VERSION_NAME := $(shell sed -n 's/^PINNODE_VERSION_NAME=//p' version.properties)
 PYTHON ?= python3
 

@@ -153,6 +153,12 @@ def android_path(ring: Ring) -> str:
 
 
 def launcher_xml(logo: Logo) -> bytes:
+    x_positions = sorted({ring.x for ring in logo.rings})
+    y_positions = sorted({ring.y for ring in logo.rings})
+    launcher_colors = {
+        (x_positions[0], y_positions[-1]): "@color/pinnode_launcher_custom_server_dot",
+        (x_positions[1], y_positions[-1]): "@color/pinnode_launcher_debug_dot",
+    }
     lines = [
         "<!-- Copyright (c) PinNode contributors",
         "     SPDX-License-Identifier: BSD-3-Clause -->",
@@ -164,11 +170,12 @@ def launcher_xml(logo: Logo) -> bytes:
         '    android:viewportHeight="108">',
     ]
     for ring in logo.rings:
+        fill_color = launcher_colors.get((ring.x, ring.y), "#ffffff")
         lines.extend(
             [
                 "  <path",
                 f'      android:pathData="{android_path(ring)}"',
-                '      android:fillColor="#ffffff"',
+                f'      android:fillColor="{fill_color}"',
             ]
         )
         if ring.opacity < 1.0:

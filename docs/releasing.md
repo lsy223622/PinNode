@@ -5,8 +5,9 @@
 
 ## 版本与安装身份
 
-`com.lsy223622.pinnode` 是正式 APK 的永久 application ID。Debug 构建使用
-`com.lsy223622.pinnode.debug`，不会覆盖正式安装。
+`com.lsy223622.pinnode` 是基础 application ID。配置自定义服务器的构建追加
+`.custom`，Debug 构建追加 `.debug`；两项同时满足时使用
+`com.lsy223622.pinnode.custom.debug`。因此 Debug 构建不会覆盖未配置自定义服务器的正式安装。
 
 应用版本只在仓库根目录的 `version.properties` 中维护。`versionCode` 按以下规则从
 `major.minor.patch` 确定性生成：
