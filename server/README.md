@@ -63,7 +63,7 @@ token 最长 90 天，适合快速配置。以后登录只需从列表选择，�
 - 代理节点：默认线路，发布 IPv4/IPv6 Exit Node 默认路由；
 - 普通节点：默认线路，接受 tailnet DNS/路由，不发布 LAN。
 
-快速模板只填写核心字段，管理员仍可继续配置本机使用的 Exit Node、额外 CIDR、
+快速模板只填写核心字段，管理员仍可继续配置客户端 Tailscale IPv4、本机使用的 Exit Node、额外 CIDR、
 Allow LAN、SNAT/过滤、Hostname、SSH/Web client、posture、RemoteConfig、
 App Connector 和 Netfilter 等偏好。
 
@@ -76,7 +76,8 @@ App Connector 和 Netfilter 等偏好。
 服务端创建的 auth key 有效期为十分钟、不可复用、预授权，但设备本身是
 `ephemeral=false`。每次供应还生成唯一 provisioning hostname；服务端只接受在本次
 供应后创建、hostname 匹配、带目标 tag 且非 ephemeral 的设备，并把 node ID 以数据库
-唯一约束绑定到会话，再启用精确路由。绑定成功后 Android 恢复管理员要求的 hostname。
+唯一约束绑定到会话，按配置设置 Tailscale IPv4，再启用精确路由。绑定成功后 Android
+恢复管理员要求的 hostname。
 
 未配置退出策略时，会话 `expiresAt` 为 `null`，也不建立清理租约。所有活动会话都按
 服务端下发的间隔调用 revisioned `sync`，以确认已应用配置并接收后续完整配置快照。

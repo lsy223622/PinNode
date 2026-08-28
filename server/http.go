@@ -586,6 +586,14 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	if session.Status == SessionActive && session.DeviceID == request.NodeID {
+		if session.Config.TailscaleIP != "" {
+			if err := s.tailscale.SetDeviceIPv4(r.Context(), accessToken, request.NodeID, session.Config.TailscaleIP); err != nil {
+				s.logger.Printf("重新确认设备 Tailscale IP 失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
+				code, message := tailscaleFailure(err, "设置客户端 Tailscale IP 失败")
+				writeError(w, http.StatusBadGateway, code, message)
+				return
+			}
+		}
 		if err := s.tailscale.SetDeviceRoutes(r.Context(), accessToken, request.NodeID, session.Routes); err != nil {
 			s.logger.Printf("重新确认设备路由失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
 			code, message := tailscaleFailure(err, "启用会话路由失败")
@@ -633,6 +641,15 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 	if !attached {
 		writeError(w, http.StatusConflict, "device_already_bound", "设备已绑定到其他会话")
 		return
+	}
+	if session.Config.TailscaleIP != "" {
+		if err := s.tailscale.SetDeviceIPv4(r.Context(), accessToken, request.NodeID, session.Config.TailscaleIP); err != nil {
+			_ = s.store.DetachDevice(session.ID, request.NodeID, now)
+			s.logger.Printf("设置设备 Tailscale IP 失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
+			code, message := tailscaleFailure(err, "设置客户端 Tailscale IP 失败")
+			writeError(w, http.StatusBadGateway, code, message)
+			return
+		}
 	}
 	if err := s.tailscale.SetDeviceRoutes(r.Context(), accessToken, request.NodeID, session.Routes); err != nil {
 		_ = s.store.DetachDevice(session.ID, request.NodeID, now)

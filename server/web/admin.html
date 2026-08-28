@@ -352,6 +352,7 @@
           <label class="setting-row"><span class="setting-copy"><span class="setting-title">使用 Tailscale DNS</span><span class="setting-description">接受 Tailscale DNS 和 MagicDNS 设置。</span></span><input id="accept-dns" type="checkbox" checked><span class="switch-ui" aria-hidden="true"></span></label>
           <label class="setting-row"><span class="setting-copy"><span class="setting-title">Shields Up</span><span class="setting-description">阻止其他设备主动连接这个临时节点。</span></span><input id="shields-up" type="checkbox"><span class="switch-ui" aria-hidden="true"></span></label>
           <label class="field-row" for="network-mode"><span class="field-label">Tailscale 底层线路</span><span class="field-help">默认线路沿用上游逻辑，优先选择有 DNS 的非计费网络；蜂窝线路不会回退到 Wi-Fi。</span><select id="network-mode"><option value="default">默认线路选择</option><option value="cellular" selected>固定使用移动数据</option></select></label>
+          <label class="field-row" for="tailscale-ip"><span class="field-label">客户端 Tailscale IPv4</span><span class="field-help">可选；节点加入 tailnet 后由服务端设置。仅支持 <code>100.64.0.0/10</code> 中可分配的 IPv4。</span><input id="tailscale-ip" type="text" maxlength="15" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="100.64.0.10"></label>
         </section>
 
         <section class="card" id="router">
@@ -717,6 +718,7 @@
           vpnEnabled: checked("vpn-enabled"),
           acceptRoutes: checked("accept-routes"),
           acceptDNS: checked("accept-dns"),
+          tailscaleIp: value("tailscale-ip"),
           useExitNode: checked("use-exit-node"),
           exitNodeId: value("exit-node-id"),
           exitNodeIp: value("exit-node-ip"),

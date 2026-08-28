@@ -94,6 +94,7 @@ pairing code 请求中的 `config` 是对安全默认值的部分覆盖；服务
 | `vpnEnabled` | boolean | `true` |
 | `acceptRoutes` | boolean | `true` |
 | `acceptDNS` | boolean | `true` |
+| `tailscaleIp` | string | `""` |
 | `useExitNode` | boolean | `false` |
 | `exitNodeId` / `exitNodeIp` / `autoExitNode` | string | `""` |
 | `exitNodeAllowLanAccess` | boolean | `false` |
@@ -114,7 +115,7 @@ pairing code 请求中的 `config` 是对安全默认值的部分覆盖；服务
 | `appConnector` | boolean | `false` |
 | `exitPolicy` | `ExitPolicy` | 全部关闭 |
 
-`useExitNode=true` 时必须且只能指定 `exitNodeId`、`exitNodeIp`、`autoExitNode` 之一；当前 `autoExitNode` 只支持 `auto:any`。`autoGatewayRoute` 与 `autoWiFiSubnetRoute` 不能同时启用。`advertiseRoutes` 最多 16 条，必须是规范化网络 CIDR；默认路由只在 `advertiseExitNode=true` 时允许。
+`tailscaleIp` 非空时必须是可分配的 Tailscale IPv4；节点加入后由服务端通过 Tailscale API 设置。`useExitNode=true` 时必须且只能指定 `exitNodeId`、`exitNodeIp`、`autoExitNode` 之一；当前 `autoExitNode` 只支持 `auto:any`。`autoGatewayRoute` 与 `autoWiFiSubnetRoute` 不能同时启用。`advertiseRoutes` 最多 16 条，必须是规范化网络 CIDR；默认路由只在 `advertiseExitNode=true` 时允许。
 
 `ExitPolicy`：
 
@@ -330,6 +331,7 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 | `POST` | `/api/v2/tailnet/{tailnet}/keys` | 创建一次性、持久、预授权、带受管 tag 的 auth key |
 | `DELETE` | `/api/v2/tailnet/{tailnet}/keys/{keyId}` | 撤销 auth key |
 | `GET` | `/api/v2/device/{nodeId}` | 验证待绑定节点 |
+| `POST` | `/api/v2/device/{nodeId}/ip` | 设置受管节点的 Tailscale IPv4 |
 | `POST` | `/api/v2/device/{nodeId}/routes` | 启用精确路由或用空数组撤销路由 |
 | `DELETE` | `/api/v2/device/{nodeId}` | 删除精确受管节点 |
 

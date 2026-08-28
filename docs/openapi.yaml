@@ -572,6 +572,7 @@ components:
         vpnEnabled: {type: boolean}
         acceptRoutes: {type: boolean}
         acceptDNS: {type: boolean}
+        tailscaleIp: {type: string, maxLength: 15, description: Optional Tailscale IPv4 assigned after the device joins.}
         useExitNode: {type: boolean}
         exitNodeId: {type: string}
         exitNodeIp: {type: string}
@@ -605,6 +606,7 @@ components:
             - vpnEnabled
             - acceptRoutes
             - acceptDNS
+            - tailscaleIp
             - useExitNode
             - exitNodeId
             - exitNodeIp

@@ -39,6 +39,18 @@ func TestDefaultSessionConfigIsGatewayOnly(t *testing.T) {
 	}
 }
 
+func TestSessionConfigNormalizesTailscaleIPv4(t *testing.T) {
+	config, err := (SessionConfig{TailscaleIP: " 100.64.0.42 "}).Normalize()
+	if err != nil || config.TailscaleIP != "100.64.0.42" {
+		t.Fatalf("Tailscale IPv4 规范化错误: config=%+v err=%v", config, err)
+	}
+	for _, value := range []string{"192.168.1.1", "fd7a:115c:a1e0::1", "100.100.100.100"} {
+		if _, err := (SessionConfig{TailscaleIP: value}).Normalize(); err == nil {
+			t.Fatalf("非法 Tailscale IPv4 未被拒绝: %q", value)
+		}
+	}
+}
+
 func TestSessionConfigRejectsUnapprovedDefaultRoute(t *testing.T) {
 	config := DefaultSessionConfig()
 	config.AdvertiseRoutes = []string{"0.0.0.0/0"}

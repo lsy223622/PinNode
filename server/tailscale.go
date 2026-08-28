@@ -41,6 +41,7 @@ type TailscaleAPI interface {
 	CreateAuthKey(context.Context, string, time.Duration, bool) (AuthKey, error)
 	DeleteAuthKey(context.Context, string, string) error
 	GetDevice(context.Context, string, string) (Device, error)
+	SetDeviceIPv4(context.Context, string, string, string) error
 	SetDeviceRoutes(context.Context, string, string, []string) error
 	DeleteDevice(context.Context, string, string) error
 }
@@ -157,6 +158,11 @@ func (c *TailscaleClient) GetDevice(ctx context.Context, accessToken, deviceID s
 	var response Device
 	err := c.doJSON(ctx, accessToken, http.MethodGet, c.apiURL("device", deviceID), nil, &response)
 	return response, err
+}
+
+func (c *TailscaleClient) SetDeviceIPv4(ctx context.Context, accessToken, deviceID, ipv4 string) error {
+	payload := map[string]string{"ipv4": ipv4}
+	return c.doJSON(ctx, accessToken, http.MethodPost, c.apiURL("device", deviceID, "ip"), payload, nil)
 }
 
 func (c *TailscaleClient) SetDeviceRoutes(ctx context.Context, accessToken, deviceID string, routes []string) error {

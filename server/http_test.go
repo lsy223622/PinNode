@@ -15,6 +15,8 @@ import (
 type fakeTailscale struct {
 	mu                 sync.Mutex
 	device             Device
+	tailscaleIPs       map[string]string
+	ipCalls            map[string]int
 	routes             map[string][]string
 	routeCalls         map[string]int
 	deleted            []string
@@ -25,6 +27,7 @@ type fakeTailscale struct {
 	oauthToken         OAuthAccessToken
 	oauthErr           error
 	createAuthKeyErr   error
+	setDeviceIPv4Err   error
 }
 
 func fakeTailscaleKey(parts ...string) string {
@@ -71,6 +74,23 @@ func (f *fakeTailscale) GetDevice(context.Context, string, string) (Device, erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.device, nil
+}
+
+func (f *fakeTailscale) SetDeviceIPv4(_ context.Context, _ string, id, ipv4 string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.setDeviceIPv4Err != nil {
+		return f.setDeviceIPv4Err
+	}
+	if f.tailscaleIPs == nil {
+		f.tailscaleIPs = make(map[string]string)
+	}
+	if f.ipCalls == nil {
+		f.ipCalls = make(map[string]int)
+	}
+	f.tailscaleIPs[id] = ipv4
+	f.ipCalls[id]++
+	return nil
 }
 
 func (f *fakeTailscale) SetDeviceRoutes(_ context.Context, _ string, id string, routes []string) error {
@@ -344,7 +364,7 @@ func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
 	service := NewService(config, store, fake, nil)
 	adminAuthentication, credentialID := installTestAdminAndCredential(t, service, store)
 
-	codeRequest := newJSONRequest(http.MethodPost, "/v1/pairing-codes", `{"credentialId":"`+credentialID+`","config":{"vpnEnabled":false,"acceptRoutes":false,"acceptDNS":false,"subnetRouter":true,"autoGatewayRoute":false,"advertiseRoutes":["192.168.1.0/24"]}}`)
+	codeRequest := newJSONRequest(http.MethodPost, "/v1/pairing-codes", `{"credentialId":"`+credentialID+`","config":{"vpnEnabled":false,"acceptRoutes":false,"acceptDNS":false,"tailscaleIp":"100.64.0.42","subnetRouter":true,"autoGatewayRoute":false,"advertiseRoutes":["192.168.1.0/24"]}}`)
 	authorizeTestAdmin(codeRequest, adminAuthentication, true)
 	codeResponse := httptest.NewRecorder()
 	service.Handler().ServeHTTP(codeResponse, codeRequest)
@@ -377,6 +397,9 @@ func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
 	}
 	if startResult.Config.VPNEnabled || startResult.Config.AcceptRoutes || startResult.Config.AcceptDNS {
 		t.Fatalf("客户端配置未从 pairing code 传递: %+v", startResult.Config)
+	}
+	if startResult.Config.TailscaleIP != "100.64.0.42" {
+		t.Fatalf("客户端 Tailscale IP 未从 pairing code 传递: %q", startResult.Config.TailscaleIP)
 	}
 	if len(startResult.Routes) != 1 || startResult.Routes[0] != "192.168.1.0/24" {
 		t.Fatalf("实际路由错误: %v", startResult.Routes)
@@ -422,6 +445,9 @@ func TestConfiguredRoutesAndPrefsFlowFromPairingCodeToSession(t *testing.T) {
 	if fake.routeCalls["n-configured"] != 2 {
 		t.Fatalf("重复绑定没有重新确认控制面路由: %d", fake.routeCalls["n-configured"])
 	}
+	if fake.tailscaleIPs["n-configured"] != "100.64.0.42" || fake.ipCalls["n-configured"] != 2 {
+		t.Fatalf("重复绑定没有重新确认控制面 IP: ip=%q calls=%d", fake.tailscaleIPs["n-configured"], fake.ipCalls["n-configured"])
+	}
 }
 
 func TestAdminPageIsEmbedded(t *testing.T) {
@@ -432,6 +458,7 @@ func TestAdminPageIsEmbedded(t *testing.T) {
 	if response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), "创建管理员账号") ||
 		!strings.Contains(response.Body.String(), "Tailscale 管理凭据") ||
+		!strings.Contains(response.Body.String(), `id="tailscale-ip"`) ||
 		!strings.Contains(response.Body.String(), managedDeviceTag) ||
 		!strings.Contains(response.Body.String(), "https://console.tailscale.com/admin/settings/trust-credentials/add") ||
 		!strings.Contains(response.Body.String(), `id="credential-add-form" class="field-row" hidden`) ||

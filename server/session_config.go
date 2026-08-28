@@ -9,6 +9,15 @@ import (
 
 const maxConfiguredRoutes = 16
 
+var (
+	tailscaleIPv4Range          = netip.MustParsePrefix("100.64.0.0/10")
+	tailscaleReservedIPv4Ranges = [...]netip.Prefix{
+		netip.MustParsePrefix("100.100.0.0/24"),
+		netip.MustParsePrefix("100.100.100.0/24"),
+		netip.MustParsePrefix("100.115.92.0/23"),
+	}
+)
+
 const (
 	NetworkModeDefault  = "default"
 	NetworkModeCellular = "cellular"
@@ -36,6 +45,7 @@ type SessionConfig struct {
 	VPNEnabled             bool       `json:"vpnEnabled"`
 	AcceptRoutes           bool       `json:"acceptRoutes"`
 	AcceptDNS              bool       `json:"acceptDNS"`
+	TailscaleIP            string     `json:"tailscaleIp"`
 	UseExitNode            bool       `json:"useExitNode"`
 	ExitNodeID             string     `json:"exitNodeId"`
 	ExitNodeIP             string     `json:"exitNodeIp"`
@@ -87,9 +97,23 @@ func (c SessionConfig) Normalize() (SessionConfig, error) {
 	}
 	c.ExitNodeID = strings.TrimSpace(c.ExitNodeID)
 	c.ExitNodeIP = strings.TrimSpace(c.ExitNodeIP)
+	c.TailscaleIP = strings.TrimSpace(c.TailscaleIP)
 	c.AutoExitNode = strings.TrimSpace(c.AutoExitNode)
 	c.Hostname = strings.TrimSpace(c.Hostname)
 	c.NetfilterMode = strings.TrimSpace(strings.ToLower(c.NetfilterMode))
+
+	if c.TailscaleIP != "" {
+		address, err := netip.ParseAddr(c.TailscaleIP)
+		if err != nil || !address.Is4() || !tailscaleIPv4Range.Contains(address) {
+			return SessionConfig{}, fmt.Errorf("tailscaleIp 不是合法的 Tailscale IPv4 地址")
+		}
+		for _, reserved := range tailscaleReservedIPv4Ranges {
+			if reserved.Contains(address) {
+				return SessionConfig{}, fmt.Errorf("tailscaleIp 不是可分配的 Tailscale IPv4 地址")
+			}
+		}
+		c.TailscaleIP = address.String()
+	}
 
 	if c.UseExitNode {
 		selectors := 0

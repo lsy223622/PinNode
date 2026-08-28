@@ -31,6 +31,7 @@ LocalAPI 数据面，但用服务端受管单屏 UI 取代本地账号登录和�
 | `networkMode=default` | eligible 网络中优先非计费网络，随后使用其他有 DNS/Internet 的网络 |
 | `networkMode=cellular` | Tailscale control、DERP、endpoint 和非 LAN 转发固定选移动数据 |
 | `acceptRoutes` / `acceptDNS` | `RouteAll` / `CorpDNS` |
+| `tailscaleIp` | 节点加入后由服务端通过 Tailscale API 设置 IPv4 |
 | `useExitNode`、ID/IP/`auto:any` | `ExitNodeID`、`ExitNodeIP`、`AutoExitNode` |
 | `subnetRouter` + 自动/显式 CIDR | `AdvertiseRoutes` 和服务端 enabled routes |
 | `autoGatewayRoute` | 当前 Wi-Fi IPv4 网关 `/32` |
@@ -63,7 +64,8 @@ Session，保证供应、设备校验、路由操作和清理使用同一凭据�
 ```text
 PIN issued → validated → one-time key issued → PIN/session/replay committed atomically
     → persistent node joined → creation/name/tag verified → unique node binding
-    → exact routes enabled → revisioned sync → optional onAppClose lease active
+    → optional Tailscale IPv4 assignment → exact routes enabled → revisioned sync
+    → optional onAppClose lease active
     → explicit/policy/optional sync timeout → routes withdrawn → device deleted
 ```
 

@@ -103,6 +103,34 @@ func TestCreateAuthKeyUsesManagedDeviceTag(t *testing.T) {
 	}
 }
 
+func TestSetDeviceIPv4UsesDeviceIPEndpoint(t *testing.T) {
+	testToken := fakeTailscaleKey("api", "test")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/device/node-test/ip" {
+			t.Errorf("设置设备 IP 请求错误: %s %s", r.Method, r.URL.Path)
+		}
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer "+testToken {
+			t.Errorf("设置设备 IP 认证头错误: %q", authorization)
+		}
+		var payload struct {
+			IPv4 string `json:"ipv4"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.IPv4 != "100.64.0.42" {
+			t.Errorf("设置设备 IP 请求体错误: %#v", payload)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewTailscaleClient(Config{TailscaleBaseURL: server.URL, TailscaleTailnet: "-"})
+	if err := client.SetDeviceIPv4(t.Context(), testToken, "node-test", "100.64.0.42"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSetDeviceRoutesEncodesEmptyArray(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/device/node-test/routes" {
