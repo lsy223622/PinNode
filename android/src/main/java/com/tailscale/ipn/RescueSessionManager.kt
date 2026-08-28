@@ -301,10 +301,10 @@ class RescueSessionManager(private val app: App) {
 
   @Serializable
   private data class SessionSyncRequest(
-      val protocolVersion: Int = PROTOCOL_VERSION,
+      val protocolVersion: Int,
       val appliedConfigRevision: Long,
-      val clientVersion: String = BuildConfig.VERSION_NAME,
-      val clientCapabilities: List<String> = listOf(SESSION_SYNC_FEATURE),
+      val clientVersion: String,
+      val clientCapabilities: List<String>,
   )
 
   @Serializable
@@ -806,7 +806,12 @@ class RescueSessionManager(private val app: App) {
               val response =
                   postJson<SessionSyncResponse, SessionSyncRequest>(
                       "v1/sessions/${current.id}/sync",
-                      SessionSyncRequest(appliedConfigRevision = current.configRevision),
+                      SessionSyncRequest(
+                          protocolVersion = PROTOCOL_VERSION,
+                          appliedConfigRevision = current.configRevision,
+                          clientVersion = BuildConfig.VERSION_NAME,
+                          clientCapabilities = listOf(SESSION_SYNC_FEATURE),
+                      ),
                       current.token,
                       current.serverUrl.ifBlank { configuredServerUrl() },
                   )
