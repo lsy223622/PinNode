@@ -1,4 +1,7 @@
-# 发布 PinNode APK
+# 发布 PinNode
+
+每个正式 Release 同时提供 Android APK 和 Linux `amd64` 服务端程序。服务端 Release
+资产只包含可执行文件及校验文件，不包含数据库、`pinnode.secret`、环境文件或管理凭据。
 
 ## 版本与安装身份
 
@@ -80,8 +83,14 @@ gh secret set PINNODE_KEY_PASSWORD --env release --repo $repo
 1. 更新 `version.properties`，完成测试并确认工作区干净。
 2. 执行 `make tag_release`，把 `v<version>` tag 推送到 GitHub。
 3. 正式发布时基于该 tag 创建 GitHub Release；发布后工作流才会开始构建。发布前可在
-   Actions 手动运行 `Release APK`，输入 `v<version>`，先验证签名 secrets 和构建链路；
-   手动运行只上传短期 workflow artifact，不会写入 GitHub Release。
-4. 确认 APK 签名证书 SHA-256 与固定证书一致，并核对上传的 SHA-256 校验文件。
-5. 正式发布时保留随 Release 上传的 `LICENSE`、`NOTICE`、`THIRD_PARTY_NOTICES.md` 和
+   Actions 手动运行 `Release APK`，输入 `v<version>`，先验证签名 secrets、Android 构建链路
+   和 Linux `amd64` 服务端构建；手动运行只上传短期 workflow artifact，不会写入 GitHub
+   Release。
+4. 确认 APK 签名证书 SHA-256 与固定证书一致，并核对以下四个二进制/校验文件：
+   `pinnode-release.apk`、`pinnode-release.apk.sha256`、`pinnode-server-linux-amd64`、
+   `pinnode-server-linux-amd64.sha256`。
+5. 服务端部署时从 Release 下载 `pinnode-server-linux-amd64`，先核对 SHA-256，再按
+   `server/README.md` 的 systemd/HTTPS 反代流程部署；不要把数据库、实例密钥、环境文件
+   或管理凭据放入 Release。
+6. 正式发布时保留随 Release 上传的 `LICENSE`、`NOTICE`、`THIRD_PARTY_NOTICES.md` 和
    `PATENTS`。

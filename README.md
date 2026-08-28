@@ -68,7 +68,7 @@ pinnode.serverLocked=true
 固定构建的界面只显示 `pinnode.serverName`，不会显示真实 URL，也不允许手机端修改。
 Debug 构建可以临时使用同一 LAN 内电脑的 HTTP 地址；Release 构建要求 HTTPS。
 
-## GitHub Release APK
+## GitHub Release assets
 
 `.github/workflows/release-apk.yml` 在 GitHub Release 发布时检出与
 `version.properties` 匹配的 `v<version>` tag；也可以从 Actions 手动运行同一套签名流程，
@@ -77,8 +77,10 @@ Android 单元测试，使用 `apksigner` 生成签名 APK 和 SHA-256 校验文
 commit 不会冻结版本，也不会触发签名发布构建。
 
 签名配置不进入仓库，规范仓库的公开工作流会忽略服务器变量，不写入或锁定服务器。
-Release 产物是可直接安装的 `pinnode-release.apk`，不是 AAB。签名 secrets、私有 fork
-的可选服务器变量和发布步骤见 [`docs/releasing.md`](docs/releasing.md)。
+Release 产物包括可直接安装的 `pinnode-release.apk`（不是 AAB），以及与同一提交构建的
+Linux `amd64` 服务端程序 `pinnode-server-linux-amd64` 和各自的 SHA-256 校验文件。服务端
+二进制不包含数据库、实例密钥、环境文件或任何凭据。签名 secrets、私有 fork 的可选服务器
+变量和发布步骤见 [`docs/releasing.md`](docs/releasing.md)。
 
 ## 运行配置下发服务
 

@@ -113,6 +113,19 @@ jobs:
           go test ./...
           go vet ./...
 
+      - name: Build Linux server release
+        working-directory: server
+        run: |
+          set -euo pipefail
+          mkdir -p ../release-assets
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -buildvcs=false \
+              -o ../release-assets/pinnode-server-linux-amd64 .
+          sha256sum ../release-assets/pinnode-server-linux-amd64 \
+            > ../release-assets/pinnode-server-linux-amd64.sha256
+          test -s ../release-assets/pinnode-server-linux-amd64
+          test -s ../release-assets/pinnode-server-linux-amd64.sha256
+
       - name: Run Android unit tests
         run: make test
 
@@ -154,6 +167,8 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             pinnode-release.apk \
             pinnode-release.apk.sha256 \
+            release-assets/pinnode-server-linux-amd64 \
+            release-assets/pinnode-server-linux-amd64.sha256 \
             LICENSE \
             NOTICE \
             THIRD_PARTY_NOTICES.md \
@@ -168,6 +183,8 @@ jobs:
           path: |
             pinnode-release.apk
             pinnode-release.apk.sha256
+            release-assets/pinnode-server-linux-amd64
+            release-assets/pinnode-server-linux-amd64.sha256
           if-no-files-found: error
           retention-days: 7
 
