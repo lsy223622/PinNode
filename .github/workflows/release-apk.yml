@@ -3,12 +3,19 @@ name: Release APK
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Version tag to validate against version.properties
+        required: true
+        default: v0.1.0
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: release-${{ github.event.release.tag_name || inputs.release_tag || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +32,7 @@ jobs:
       - name: Check out the release tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || github.sha }}
           fetch-depth: 0
 
       - name: Check PinNode branding assets
@@ -33,7 +40,7 @@ jobs:
 
       - name: Verify the release tag
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           set -euo pipefail
           version="$(sed -n 's/^PINNODE_VERSION_NAME=//p' version.properties)"
@@ -134,13 +141,16 @@ jobs:
           : "${JKS_KEY_PASSWORD:?Set PINNODE_KEY_PASSWORD in the release environment}"
           make release-apk
 
+      - name: Create release checksums
+        run: sha256sum pinnode-release.apk > pinnode-release.apk.sha256
+
       - name: Upload release assets
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          sha256sum pinnode-release.apk > pinnode-release.apk.sha256
           gh release upload "$RELEASE_TAG" \
             pinnode-release.apk \
             pinnode-release.apk.sha256 \
@@ -149,6 +159,17 @@ jobs:
             THIRD_PARTY_NOTICES.md \
             PATENTS \
             --clobber
+
+      - name: Upload workflow validation artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pinnode-release-${{ inputs.release_tag }}
+          path: |
+            pinnode-release.apk
+            pinnode-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Remove the temporary signing keystore
         if: always()

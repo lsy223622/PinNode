@@ -70,10 +70,11 @@ Debug 构建可以临时使用同一 LAN 内电脑的 HTTP 地址；Release 构�
 
 ## GitHub Release APK
 
-`.github/workflows/release-apk.yml` 只在 GitHub Release 被发布时运行，并检出与
-`version.properties` 匹配的 `v<version>` tag。它会执行格式检查、Go 测试、Android
-单元测试，使用 `apksigner` 生成签名 APK 和 SHA-256 校验文件，再上传到该 Release；
-普通 push 或 commit 不会冻结版本，也不会触发发布构建。
+`.github/workflows/release-apk.yml` 在 GitHub Release 发布时检出与
+`version.properties` 匹配的 `v<version>` tag；也可以从 Actions 手动运行同一套签名流程，
+生成短期 workflow artifact 用于验收而不创建公开 Release。它会执行格式检查、Go 测试、
+Android 单元测试，使用 `apksigner` 生成签名 APK 和 SHA-256 校验文件；普通 push 或
+commit 不会冻结版本，也不会触发签名发布构建。
 
 签名配置不进入仓库，规范仓库的公开工作流会忽略服务器变量，不写入或锁定服务器。
 Release 产物是可直接安装的 `pinnode-release.apk`，不是 AAB。签名 secrets、私有 fork

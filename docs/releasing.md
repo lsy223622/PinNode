@@ -79,6 +79,9 @@ gh secret set PINNODE_KEY_PASSWORD --env release --repo $repo
 
 1. 更新 `version.properties`，完成测试并确认工作区干净。
 2. 执行 `make tag_release`，把 `v<version>` tag 推送到 GitHub。
-3. 基于该 tag 创建 GitHub Release；发布后工作流才会开始构建。
+3. 正式发布时基于该 tag 创建 GitHub Release；发布后工作流才会开始构建。发布前可在
+   Actions 手动运行 `Release APK`，输入 `v<version>`，先验证签名 secrets 和构建链路；
+   手动运行只上传短期 workflow artifact，不会写入 GitHub Release。
 4. 确认 APK 签名证书 SHA-256 与固定证书一致，并核对上传的 SHA-256 校验文件。
-5. 保留随 Release 上传的 `LICENSE`、`NOTICE`、`THIRD_PARTY_NOTICES.md` 和 `PATENTS`。
+5. 正式发布时保留随 Release 上传的 `LICENSE`、`NOTICE`、`THIRD_PARTY_NOTICES.md` 和
+   `PATENTS`。
