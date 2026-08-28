@@ -1,24 +1,49 @@
 <!-- Copyright (c) PinNode contributors
      SPDX-License-Identifier: BSD-3-Clause -->
+<!-- GENERATED FILE: source assets/pinnode-nine-ring.svg. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
   <path
-      android:pathData="M54,20 L30,72 L78,72 Z"
-      android:fillColor="@android:color/transparent"
-      android:strokeColor="#ffffff"
-      android:strokeWidth="5"
-      android:strokeLineCap="round"
-      android:strokeLineJoin="round" />
+      android:pathData="M44.25,39.37a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      />
   <path
-      android:pathData="M62,20a8,8 0,1 1,-16 0a8,8 0,1 1,16 0z"
-      android:fillColor="#ffffff" />
+      android:pathData="M58.88,39.37a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      />
   <path
-      android:pathData="M38,72a8,8 0,1 1,-16 0a8,8 0,1 1,16 0z"
-      android:fillColor="#ffffff" />
+      android:pathData="M73.5,39.37a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      android:fillAlpha="0.4"
+      />
   <path
-      android:pathData="M86,72a8,8 0,1 1,-16 0a8,8 0,1 1,16 0z"
-      android:fillColor="#ffffff" />
+      android:pathData="M44.25,54a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      />
+  <path
+      android:pathData="M58.88,54a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      />
+  <path
+      android:pathData="M73.5,54a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      android:fillAlpha="0.4"
+      />
+  <path
+      android:pathData="M44.25,68.62a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      />
+  <path
+      android:pathData="M58.88,68.62a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      android:fillAlpha="0.4"
+      />
+  <path
+      android:pathData="M73.5,68.62a4.875,4.875 0,1 0,-9.75 0a4.875,4.875 0,1 0,9.75 0z"
+      android:fillColor="#ffffff"
+      android:fillAlpha="0.4"
+      />
 </vector>

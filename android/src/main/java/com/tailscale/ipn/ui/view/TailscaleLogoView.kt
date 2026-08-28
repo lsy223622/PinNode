@@ -10,7 +10,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.Fill
 import com.tailscale.ipn.ui.theme.onBackgroundLogoDotDisabled
 import com.tailscale.ipn.ui.theme.onBackgroundLogoDotEnabled
 import com.tailscale.ipn.ui.theme.standaloneLogoDotDisabled
@@ -23,12 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 // DotsMatrix represents the state of the progress indicator.
 typealias DotsMatrix = List<List<Boolean>>
 
-val logoDotsMatrix: DotsMatrix =
-    listOf(
-        listOf(true, true, false),
-        listOf(true, true, false),
-        listOf(true, false, false),
-    )
+val logoDotsMatrix: DotsMatrix = PinNodeLogoGeometry.defaultDotsMatrix
 
 @Composable
 fun TailscaleLogoView(
@@ -72,15 +67,15 @@ fun TailscaleLogoView(
     val side = size.minDimension
     val left = (size.width - side) / 2
     val top = (size.height - side) / 2
-    val xPositions = floatArrayOf(0.296875f, 0.50006944f, 0.703125f)
-    val yPositions = floatArrayOf(0.29680556f, 0.5f, 0.70305556f)
+    val xPositions = PinNodeLogoGeometry.xPositions
+    val yPositions = PinNodeLogoGeometry.yPositions
     for (y in 0..2) {
       for (x in 0..2) {
         drawCircle(
             color = if (currentMatrix[y][x]) primaryColor else secondaryColor,
-            radius = side * 0.05370833f,
+            radius = side * PinNodeLogoGeometry.dotRadius,
             center = Offset(left + side * xPositions[x], top + side * yPositions[y]),
-            style = Stroke(width = side * 0.028f),
+            style = Fill,
         )
       }
     }

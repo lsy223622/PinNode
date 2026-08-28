@@ -45,6 +45,7 @@ ANDROID_BUILD_TOOLS_VERSION := $(shell grep '^androidBuildToolsVersion=' android
 ANDROID_APPLICATION_ID := com.lsy223622.pinnode
 ANDROID_DEBUG_APPLICATION_ID := $(ANDROID_APPLICATION_ID).debug
 PINNODE_VERSION_NAME := $(shell sed -n 's/^PINNODE_VERSION_NAME=//p' version.properties)
+PYTHON ?= python3
 
 DEBUG_APK := pinnode-debug.apk
 RELEASE_APK := pinnode-release.apk
@@ -145,6 +146,14 @@ export GOROOT := # Unset
 # Android Build Targets
 # ------------------------------------------------------------------------------
 
+.PHONY: pinnode-logo
+pinnode-logo:
+	$(PYTHON) scripts/sync_pinnode_logo.py --write
+
+.PHONY: pinnode-logo-check
+pinnode-logo-check:
+	$(PYTHON) scripts/sync_pinnode_logo.py --check
+
 
 .PHONY: debug-unstripped
 debug-unstripped: build-unstripped-aar
@@ -178,7 +187,7 @@ release-apk: jarsign-env $(RELEASE_APK)
 
 # gradle-dependencies groups together the android sources and libtailscale needed to assemble tests/debug/release builds.
 .PHONY: gradle-dependencies
-gradle-dependencies: $(shell find android -type f -not -path "android/build/*" -not -path "android/libs/*" -not -path '*/.*') $(LIBTAILSCALE_AAR) tailscale.version
+gradle-dependencies: pinnode-logo $(shell find android -type f -not -path "android/build/*" -not -path "android/libs/*" -not -path '*/.*') $(LIBTAILSCALE_AAR) tailscale.version
 
 $(RELEASE_AAB): version gradle-dependencies
 	@echo "Building release AAB"

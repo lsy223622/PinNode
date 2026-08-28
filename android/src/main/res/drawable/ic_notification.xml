@@ -3,13 +3,14 @@
     android:height="100dp"
     android:viewportWidth="100"
     android:viewportHeight="100">
-  <path android:pathData="M35.058333,29.680556a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeWidth="2.8"/>
-  <path android:pathData="M55.377777,29.680556a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeWidth="2.8"/>
-  <path android:pathData="M75.683333,29.680556a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeAlpha="0.4" android:strokeWidth="2.8"/>
-  <path android:pathData="M35.058333,50a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeWidth="2.8"/>
-  <path android:pathData="M55.377777,50a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeWidth="2.8"/>
-  <path android:pathData="M75.683333,50a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeAlpha="0.4" android:strokeWidth="2.8"/>
-  <path android:pathData="M35.058333,70.305556a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeWidth="2.8"/>
-  <path android:pathData="M55.377777,70.305556a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeAlpha="0.4" android:strokeWidth="2.8"/>
-  <path android:pathData="M75.683333,70.305556a5.370833,5.370833 0,1 0,-10.741666 0a5.370833,5.370833 0,1 0,10.741666 0z" android:fillColor="@android:color/transparent" android:strokeColor="#000000" android:strokeAlpha="0.4" android:strokeWidth="2.8"/>
+  <!-- GENERATED FILE: source assets/pinnode-nine-ring.svg. -->
+  <path android:pathData="M36.458333,29.680556a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000"/>
+  <path android:pathData="M56.777777,29.680556a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000"/>
+  <path android:pathData="M77.083333,29.680556a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000" android:fillAlpha="0.4"/>
+  <path android:pathData="M36.458333,50a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000"/>
+  <path android:pathData="M56.777777,50a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000"/>
+  <path android:pathData="M77.083333,50a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000" android:fillAlpha="0.4"/>
+  <path android:pathData="M36.458333,70.305556a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000"/>
+  <path android:pathData="M56.777777,70.305556a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000" android:fillAlpha="0.4"/>
+  <path android:pathData="M77.083333,70.305556a6.770833,6.770833 0,1 0,-13.541666 0a6.770833,6.770833 0,1 0,13.541666 0z" android:fillColor="#000000" android:fillAlpha="0.4"/>
 </vector>
