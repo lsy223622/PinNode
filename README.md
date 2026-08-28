@@ -78,10 +78,14 @@ Android 单元测试，使用 `apksigner` 生成签名 APK 和 SHA-256 校验文
 commit 不会冻结版本，也不会触发签名发布构建。
 
 签名配置不进入仓库，规范仓库的公开工作流会忽略服务器变量，不写入或锁定服务器。
-Release 产物包括可直接安装的 `pinnode-release.apk`（不是 AAB），以及与同一提交构建的
-Linux `amd64` 服务端程序 `pinnode-server-linux-amd64` 和各自的 SHA-256 校验文件。服务端
-二进制不包含数据库、实例密钥、环境文件或任何凭据。签名 secrets、私有 fork 的可选服务器
-变量和发布步骤见 [`docs/releasing.md`](docs/releasing.md)。
+Release 文件名包含版本号和构建提交的短哈希，例如
+`pinnode-android-v0.1.0-0123456789ab.apk` 与
+`pinnode-server-v0.1.0-linux-amd64-0123456789ab.tar.gz`；对应的 `.sha256` 文件使用相同
+文件名。APK 可直接安装（不是 AAB），并在 `assets/LICENSES.md` 中内嵌随附许可证；服务端
+压缩包内使用恒定文件名 `pinnode-server`，同时包含 `LICENSES.md`，便于部署时直接替换。
+Release 页面另提供同一版本/提交哈希命名的合并许可证文件。服务端程序不包含数据库、实例
+密钥、环境文件或任何凭据。签名 secrets、私有 fork 的可选服务器变量和发布步骤见
+[`docs/releasing.md`](docs/releasing.md)。
 
 ## 运行配置下发服务
 
@@ -134,7 +138,8 @@ PinNode 复用官方 backend 的 tailnet 数据面和 DNS/路由能力，但它�
 
 ## 许可证与安全报告
 
-PinNode 原创代码采用 [GNU General Public License v3.0 (GPLv3)](LICENSE)。上游版权、第三方依赖、专利授权
-和商标说明分别见 [NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-与 [PATENTS](PATENTS)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要提交公开
+PinNode 原创代码采用 [GNU General Public License v3.0 (GPLv3)](LICENSE)。发布二进制随附的
+许可证、版权、第三方依赖、专利授权和商标说明合并在 [`LICENSES.md`](LICENSES.md)；仓库中的
+[NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [PATENTS](PATENTS)
+仍是各自材料的权威来源。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要提交公开
 issue。

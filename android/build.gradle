@@ -31,6 +31,17 @@ apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
 apply plugin: 'com.ncorti.ktfmt.gradle'
 
+def licenseBundleFile = project.file('../LICENSES.md')
+def generatedLicenseAssetsDir = file("${project.buildDir}/generated/pinnode-license-assets")
+def preparePinnodeLicenseAssets = tasks.register('preparePinnodeLicenseAssets') {
+    inputs.file(licenseBundleFile)
+    outputs.file(file("${generatedLicenseAssetsDir}/LICENSES.md"))
+    doLast {
+        generatedLicenseAssetsDir.mkdirs()
+        file("${generatedLicenseAssetsDir}/LICENSES.md").bytes = licenseBundleFile.bytes
+    }
+}
+
 android {
     def androidApiLevel = providers.gradleProperty("androidApiLevel").get().toInteger()
 
@@ -99,6 +110,12 @@ android {
     // applicationId above is the PinNode install identity.
     namespace 'com.tailscale.ipn'
 
+    sourceSets {
+        main {
+            assets.srcDir generatedLicenseAssetsDir
+        }
+    }
+
     buildTypes {
         applicationTest {
             initWith debug
@@ -125,6 +142,8 @@ android {
     testBuildType "applicationTest"
 
 }
+
+tasks.named('preBuild').configure { dependsOn preparePinnodeLicenseAssets }
 
 dependencies {
     // Android dependencies.

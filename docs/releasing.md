@@ -1,7 +1,11 @@
 # 发布 PinNode
 
-每个正式 Release 同时提供 Android APK 和 Linux `amd64` 服务端程序。服务端 Release
-资产只包含可执行文件及校验文件，不包含数据库、`pinnode.secret`、环境文件或管理凭据。
+每个正式 Release 同时提供 Android APK 和 Linux `amd64` 服务端程序。二进制文件名包含
+版本号和构建提交短哈希，便于确认来源；服务端以压缩包发布，内含恒定文件名的
+`pinnode-server` 和 `LICENSES.md`，便于部署替换并保持许可证随程序分发。APK 以
+`assets/LICENSES.md` 的形式内嵌同一份合并许可证。Release 页面另提供一份带版本/提交哈希
+文件名的 `LICENSES.md`，不再拆成多个许可证附件。所有发布资产都不包含数据库、
+`pinnode.secret`、环境文件或管理凭据。
 
 ## 版本与安装身份
 
@@ -79,6 +83,25 @@ gh secret set PINNODE_KEY_PASSWORD --env release --repo $repo
 
 当 locked 为 `true` 时，工作流会要求 URL 和名称都存在；公开仓库无需保留任何私有值。
 
+## 资产命名与许可证布局
+
+工作流从 `version.properties` 读取版本，并从实际构建提交生成 12 位短哈希 `commit`。正式
+Release 的资产名称为：
+
+```text
+pinnode-android-v<version>-<commit>.apk
+pinnode-android-v<version>-<commit>.apk.sha256
+pinnode-server-v<version>-linux-amd64-<commit>.tar.gz
+pinnode-server-v<version>-linux-amd64-<commit>.tar.gz.sha256
+pinnode-v<version>-<commit>-LICENSES.md
+```
+
+服务端压缩包解开后只有恒定部署文件名 `pinnode-server` 和 `LICENSES.md`；APK 内的
+`assets/LICENSES.md` 与 Release 上的合并文件来自同一提交。`scripts/build_license_bundle.py`
+从仓库根目录的 GPL、NOTICE、PATENTS、第三方声明以及锁定版本的 Tailscale 依赖清单生成
+`LICENSES.md`，构建前会用 `--check` 防止合并文件过期。仓库中的单独许可证文件仍然保留，
+用于源码浏览和作为合并文件的权威来源。
+
 ## 发布步骤
 
 1. 更新 `version.properties`，完成测试并确认工作区干净。
@@ -87,11 +110,9 @@ gh secret set PINNODE_KEY_PASSWORD --env release --repo $repo
    Actions 手动运行 `Release APK`，输入 `v<version>`，先验证签名 secrets、Android 构建链路
    和 Linux `amd64` 服务端构建；手动运行只上传短期 workflow artifact，不会写入 GitHub
    Release。
-4. 确认 APK 签名证书 SHA-256 与固定证书一致，并核对以下四个二进制/校验文件：
-   `pinnode-release.apk`、`pinnode-release.apk.sha256`、`pinnode-server-linux-amd64`、
-   `pinnode-server-linux-amd64.sha256`。
-5. 服务端部署时从 Release 下载 `pinnode-server-linux-amd64`，先核对 SHA-256，再按
-   `server/README.md` 的 systemd/HTTPS 反代流程部署；不要把数据库、实例密钥、环境文件
-   或管理凭据放入 Release。
-6. 正式发布时保留随 Release 上传的 `LICENSE`、`NOTICE`、`THIRD_PARTY_NOTICES.md` 和
-   `PATENTS`。
+4. 确认 APK 签名证书 SHA-256 与固定证书一致，并核对带有相同 `<version>-<commit>` 的
+   APK、服务端压缩包及各自 `.sha256` 文件；同时确认 APK 包含 `assets/LICENSES.md`，
+   服务端压缩包包含 `pinnode-server` 和 `LICENSES.md`。
+5. 服务端部署时从 Release 下载 `pinnode-server-v<version>-linux-amd64-<commit>.tar.gz`，
+   先核对 SHA-256，解压后使用其中的 `pinnode-server`，再按 `server/README.md` 的
+   systemd/HTTPS 反代流程部署；不要把数据库、实例密钥、环境文件或管理凭据放入 Release。

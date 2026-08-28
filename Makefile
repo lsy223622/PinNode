@@ -156,6 +156,10 @@ pinnode-logo:
 pinnode-logo-check:
 	$(PYTHON) scripts/sync_pinnode_logo.py --check
 
+.PHONY: license-bundle
+license-bundle:
+	$(PYTHON) scripts/build_license_bundle.py
+
 
 .PHONY: debug-unstripped
 debug-unstripped: build-unstripped-aar
@@ -189,7 +193,7 @@ release-apk: jarsign-env $(RELEASE_APK)
 
 # gradle-dependencies groups together the android sources and libtailscale needed to assemble tests/debug/release builds.
 .PHONY: gradle-dependencies
-gradle-dependencies: pinnode-logo $(shell find android -type f -not -path "android/build/*" -not -path "android/libs/*" -not -path '*/.*') $(LIBTAILSCALE_AAR) tailscale.version
+gradle-dependencies: pinnode-logo license-bundle $(shell find android -type f -not -path "android/build/*" -not -path "android/libs/*" -not -path '*/.*') $(LIBTAILSCALE_AAR) tailscale.version
 
 $(RELEASE_AAB): version gradle-dependencies
 	@echo "Building release AAB"

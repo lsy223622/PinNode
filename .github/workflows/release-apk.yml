@@ -50,6 +50,23 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare release metadata
+        id: release_meta
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^PINNODE_VERSION_NAME=//p' version.properties)"
+          commit="$(git rev-parse --short=12 HEAD)"
+          test "$RELEASE_TAG" = "v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "android_asset=pinnode-android-v${version}-${commit}.apk" >> "$GITHUB_OUTPUT"
+          echo "android_checksum=pinnode-android-v${version}-${commit}.apk.sha256" >> "$GITHUB_OUTPUT"
+          echo "server_asset=pinnode-server-v${version}-linux-amd64-${commit}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "server_checksum=pinnode-server-v${version}-linux-amd64-${commit}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          echo "licenses_asset=pinnode-v${version}-${commit}-LICENSES.md" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
@@ -104,6 +121,9 @@ jobs:
       - name: Check license headers
         run: ./scripts/check_license_headers.sh .
 
+      - name: Check license bundle
+        run: python3 scripts/build_license_bundle.py --check
+
       - name: Run Go tests
         run: make go-test
 
@@ -115,16 +135,22 @@ jobs:
 
       - name: Build Linux server release
         working-directory: server
+        env:
+          SERVER_ASSET: ${{ steps.release_meta.outputs.server_asset }}
+          SERVER_CHECKSUM: ${{ steps.release_meta.outputs.server_checksum }}
         run: |
           set -euo pipefail
-          mkdir -p ../release-assets
+          mkdir -p ../release-assets ../release-staging
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
             go build -trimpath -buildvcs=false \
-              -o ../release-assets/pinnode-server-linux-amd64 .
-          sha256sum ../release-assets/pinnode-server-linux-amd64 \
-            > ../release-assets/pinnode-server-linux-amd64.sha256
-          test -s ../release-assets/pinnode-server-linux-amd64
-          test -s ../release-assets/pinnode-server-linux-amd64.sha256
+              -o ../release-staging/pinnode-server .
+          cp ../LICENSES.md ../release-staging/LICENSES.md
+          tar -C ../release-staging -czf "../release-assets/$SERVER_ASSET" \
+            pinnode-server LICENSES.md
+          sha256sum "../release-assets/$SERVER_ASSET" \
+            > "../release-assets/$SERVER_CHECKSUM"
+          test -s "../release-assets/$SERVER_ASSET"
+          test -s "../release-assets/$SERVER_CHECKSUM"
 
       - name: Run Android unit tests
         run: make test
@@ -155,24 +181,39 @@ jobs:
           make release-apk
 
       - name: Create release checksums
-        run: sha256sum pinnode-release.apk > pinnode-release.apk.sha256
+        env:
+          ANDROID_ASSET: ${{ steps.release_meta.outputs.android_asset }}
+          ANDROID_CHECKSUM: ${{ steps.release_meta.outputs.android_checksum }}
+          LICENSES_ASSET: ${{ steps.release_meta.outputs.licenses_asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp pinnode-release.apk "release-assets/$ANDROID_ASSET"
+          cp LICENSES.md "release-assets/$LICENSES_ASSET"
+          sha256sum "release-assets/$ANDROID_ASSET" > "release-assets/$ANDROID_CHECKSUM"
+          unzip -Z1 pinnode-release.apk | grep -Fxq assets/LICENSES.md
+          test -s "release-assets/$ANDROID_ASSET"
+          test -s "release-assets/$ANDROID_CHECKSUM"
+          test -s "release-assets/$LICENSES_ASSET"
 
       - name: Upload release assets
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ANDROID_ASSET: ${{ steps.release_meta.outputs.android_asset }}
+          ANDROID_CHECKSUM: ${{ steps.release_meta.outputs.android_checksum }}
+          SERVER_ASSET: ${{ steps.release_meta.outputs.server_asset }}
+          SERVER_CHECKSUM: ${{ steps.release_meta.outputs.server_checksum }}
+          LICENSES_ASSET: ${{ steps.release_meta.outputs.licenses_asset }}
         run: |
           set -euo pipefail
           gh release upload "$RELEASE_TAG" \
-            pinnode-release.apk \
-            pinnode-release.apk.sha256 \
-            release-assets/pinnode-server-linux-amd64 \
-            release-assets/pinnode-server-linux-amd64.sha256 \
-            LICENSE \
-            NOTICE \
-            THIRD_PARTY_NOTICES.md \
-            PATENTS \
+            "release-assets/$ANDROID_ASSET" \
+            "release-assets/$ANDROID_CHECKSUM" \
+            "release-assets/$SERVER_ASSET" \
+            "release-assets/$SERVER_CHECKSUM" \
+            "release-assets/$LICENSES_ASSET" \
             --clobber
 
       - name: Upload workflow validation artifact
@@ -180,11 +221,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pinnode-release-${{ inputs.release_tag }}
-          path: |
-            pinnode-release.apk
-            pinnode-release.apk.sha256
-            release-assets/pinnode-server-linux-amd64
-            release-assets/pinnode-server-linux-amd64.sha256
+          path: release-assets/*
           if-no-files-found: error
           retention-days: 7
 
