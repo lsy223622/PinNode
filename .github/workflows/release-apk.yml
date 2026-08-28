@@ -147,8 +147,10 @@ jobs:
           cp ../LICENSES.md ../release-staging/LICENSES.md
           tar -C ../release-staging -czf "../release-assets/$SERVER_ASSET" \
             pinnode-server LICENSES.md
-          sha256sum "../release-assets/$SERVER_ASSET" \
-            > "../release-assets/$SERVER_CHECKSUM"
+          (
+            cd ../release-assets
+            sha256sum "$SERVER_ASSET"
+          ) > "../release-assets/$SERVER_CHECKSUM"
           test -s "../release-assets/$SERVER_ASSET"
           test -s "../release-assets/$SERVER_CHECKSUM"
 
@@ -190,7 +192,10 @@ jobs:
           mkdir -p release-assets
           cp pinnode-release.apk "release-assets/$ANDROID_ASSET"
           cp LICENSES.md "release-assets/$LICENSES_ASSET"
-          sha256sum "release-assets/$ANDROID_ASSET" > "release-assets/$ANDROID_CHECKSUM"
+          (
+            cd release-assets
+            sha256sum "$ANDROID_ASSET"
+          ) > "release-assets/$ANDROID_CHECKSUM"
           unzip -Z1 pinnode-release.apk | grep -Fxq assets/LICENSES.md
           test -s "release-assets/$ANDROID_ASSET"
           test -s "release-assets/$ANDROID_CHECKSUM"

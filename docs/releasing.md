@@ -112,7 +112,8 @@ pinnode-v<version>-<commit>-LICENSES.md
    Release。
 4. 确认 APK 签名证书 SHA-256 与固定证书一致，并核对带有相同 `<version>-<commit>` 的
    APK、服务端压缩包及各自 `.sha256` 文件；同时确认 APK 包含 `assets/LICENSES.md`，
-   服务端压缩包包含 `pinnode-server` 和 `LICENSES.md`。
+   服务端压缩包包含 `pinnode-server` 和 `LICENSES.md`。校验文件只记录附件文件名，
+   下载到同一目录后可直接执行 `sha256sum -c <asset>.sha256`。
 5. 服务端部署时从 Release 下载 `pinnode-server-v<version>-linux-amd64-<commit>.tar.gz`，
    先核对 SHA-256，解压后使用其中的 `pinnode-server`，再按 `server/README.md` 的
    systemd/HTTPS 反代流程部署；不要把数据库、实例密钥、环境文件或管理凭据放入 Release。
