@@ -18,13 +18,11 @@ tags:
     description: Encrypted Tailscale management credential metadata.
   - name: Pairing
     description: Single-use pairing code creation.
+  - name: Admin monitoring
+    description: Console snapshots, structured logs, and resumable SSE streams.
   - name: Sessions
     description: Session provisioning, synchronization, and cleanup.
 x-reserved-extensions:
-  client-log-upload-v1:
-    path: /v1/sessions/{sessionId}/log-batches
-    method: POST
-    status: reserved-not-implemented
   session-config-update-v1:
     path: /v1/sessions/{sessionId}/config
     method: PATCH
@@ -243,6 +241,96 @@ paths:
           $ref: "#/components/responses/Error"
         "5XX":
           $ref: "#/components/responses/Error"
+  /v1/admin/console:
+    get:
+      summary: Read the live administrator console snapshot
+      tags: [Admin monitoring]
+      operationId: getAdminConsole
+      security:
+        - adminCookie: []
+      responses:
+        "200":
+          description: Pending pairing codes, active sessions, and live Tailscale snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminConsole"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/admin/console/stream:
+    get:
+      summary: Stream Console state changes using resumable SSE
+      tags: [Admin monitoring]
+      operationId: streamAdminConsole
+      security:
+        - adminCookie: []
+      parameters:
+        - $ref: "#/components/parameters/AfterSequence"
+        - $ref: "#/components/parameters/LastEventId"
+      responses:
+        "200":
+          description: Server-sent state events with a global sequence ID and reset events when the resume window is missed.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "4XX":
+          $ref: "#/components/responses/Error"
+  /v1/admin/logs/recent:
+    get:
+      summary: Read recent structured logs from the in-process ring buffer
+      tags: [Admin monitoring]
+      operationId: getRecentAdminLogs
+      security:
+        - adminCookie: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2048
+            default: 200
+      responses:
+        "200":
+          description: Recent logs and the sequence window currently available.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logs, latestSequence, oldestSequence]
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LogEvent"
+                  latestSequence: {type: integer, minimum: 0}
+                  oldestSequence: {type: integer, minimum: 0}
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/admin/logs/stream:
+    get:
+      summary: Stream structured logs using resumable SSE
+      tags: [Admin monitoring]
+      operationId: streamAdminLogs
+      security:
+        - adminCookie: []
+      parameters:
+        - $ref: "#/components/parameters/AfterSequence"
+        - $ref: "#/components/parameters/LastEventId"
+      responses:
+        "200":
+          description: Server-sent log events with a global sequence ID and reset events when the resume window is missed.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "4XX":
+          $ref: "#/components/responses/Error"
   /v1/sessions:
     get:
       summary: List session history
@@ -381,6 +469,35 @@ paths:
           $ref: "#/components/responses/Error"
         "5XX":
           $ref: "#/components/responses/Error"
+  /v1/sessions/{sessionId}/logs:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      summary: Upload a bounded batch of redacted client logs
+      tags: [Sessions]
+      operationId: uploadSessionLogs
+      security:
+        - sessionBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientLogsRequest"
+      responses:
+        "200":
+          description: Number of accepted log entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: {type: integer, minimum: 0, maximum: 32}
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
   /v1/sessions/{sessionId}/stop:
     parameters:
       - $ref: "#/components/parameters/SessionId"
@@ -432,6 +549,22 @@ components:
         minLength: 16
         maxLength: 128
         pattern: "^[!-~]+$"
+    AfterSequence:
+      name: after
+      in: query
+      required: false
+      description: Last global event sequence already processed by the client.
+      schema:
+        type: integer
+        minimum: 0
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: Standard SSE resume sequence. It takes precedence over after.
+      schema:
+        type: string
+        pattern: "^[0-9]+$"
   responses:
     Error:
       description: Structured API error.
@@ -472,6 +605,117 @@ components:
           required: [jsonBodyBytes]
           properties:
             jsonBodyBytes: {type: integer, const: 16384}
+    ClientStateReport:
+      type: object
+      additionalProperties: false
+      properties:
+        backendState: {type: string, maxLength: 256}
+        tailscaleRunning: {type: boolean}
+        vpnEnabled: {type: boolean}
+        networkMode: {type: string, maxLength: 256}
+        tailscalePath: {type: string, maxLength: 256}
+        wifiConnected: {type: boolean}
+        cellularConnected: {type: boolean}
+        internetAvailable: {type: boolean}
+        interfaceName: {type: string, maxLength: 256}
+        tailscaleIps:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 256}
+        allowedIps:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 256}
+        advertisedRoutes:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 256}
+        deviceName: {type: string, maxLength: 256}
+        deviceModel: {type: string, maxLength: 256}
+        os: {type: string, maxLength: 256}
+        osVersion: {type: string, maxLength: 256}
+        health:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 256}
+        lastError: {type: string, maxLength: 256}
+    ClientLogEntry:
+      type: object
+      additionalProperties: false
+      required: [timestamp, level, component, message]
+      properties:
+        timestamp: {type: string, format: date-time}
+        level: {type: string, enum: [DEBUG, INFO, WARN, ERROR]}
+        component: {type: string, minLength: 1, maxLength: 128}
+        message: {type: string, minLength: 1, maxLength: 2048}
+    ClientLogsRequest:
+      type: object
+      additionalProperties: false
+      required: [logs]
+      properties:
+        logs:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/ClientLogEntry"
+    LogEvent:
+      type: object
+      additionalProperties: false
+      required: [sequence, timestamp, level, source, component, message]
+      properties:
+        sequence: {type: integer, minimum: 1}
+        timestamp: {type: string, format: date-time}
+        level: {type: string, enum: [DEBUG, INFO, WARN, ERROR]}
+        source: {type: string, enum: [server, client]}
+        component: {type: string}
+        message: {type: string}
+        sessionId: {type: string}
+        nodeId: {type: string}
+    AdminConsolePending:
+      type: object
+      additionalProperties: false
+      required: [code, codeAvailable, codeRef, createdAt, expiresAt, remainingSeconds, status, configSummary, config]
+      properties:
+        code: {type: string}
+        codeAvailable: {type: boolean}
+        codeRef: {type: string}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        remainingSeconds: {type: integer, minimum: 0}
+        status: {type: string, const: pending}
+        configSummary: {type: string}
+        config: {$ref: "#/components/schemas/SessionConfig"}
+    AdminConsoleSession:
+      type: object
+      additionalProperties: true
+      required: [sessionId, status, health, healthReason, config, clientState, tailscaleStatus]
+      properties:
+        sessionId: {type: string}
+        authorizationCode: {type: string}
+        authorizationCodeRef: {type: string}
+        status: {type: string, enum: [provisioning, active, cleaning, cleanup_failed]}
+        health: {type: string, enum: [Healthy, Warning, Offline, Unknown, Ending, Cleaning]}
+        healthReason: {type: string}
+        config: {$ref: "#/components/schemas/SessionConfig"}
+        clientState: {$ref: "#/components/schemas/ClientStateReport"}
+        tailscaleStatus: {type: string, enum: [not-attached, unavailable, available]}
+        tailscale: {type: object}
+    AdminConsole:
+      type: object
+      additionalProperties: false
+      required: [serverTime, eventSequence, pending, sessions, counts]
+      properties:
+        serverTime: {type: string, format: date-time}
+        eventSequence: {type: integer, minimum: 0}
+        pending:
+          type: array
+          items: {$ref: "#/components/schemas/AdminConsolePending"}
+        sessions:
+          type: array
+          items: {$ref: "#/components/schemas/AdminConsoleSession"}
+        counts:
+          type: object
+          additionalProperties: {type: integer, minimum: 0}
     ErrorResponse:
       type: object
       additionalProperties: false
@@ -730,6 +974,10 @@ components:
           maxItems: 32
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 64, pattern: "^[a-z0-9.-]+$"}
+        clientState:
+          oneOf:
+            - $ref: "#/components/schemas/ClientStateReport"
+            - type: "null"
     SessionConfigSnapshot:
       type: object
       additionalProperties: false

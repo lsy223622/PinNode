@@ -29,7 +29,8 @@ type Service struct {
 	pow       *PoWManager
 	cipher    *CredentialCipher
 	dummyHash string
-	logger    *log.Logger
+	logger    *structuredLogger
+	events    *adminEventHub
 	oauthMu   sync.Mutex
 	oauth     map[string]cachedOAuthToken
 	startMu   sync.Mutex
@@ -62,6 +63,7 @@ func NewService(config Config, store *Store, tailscale TailscaleAPI, logger *log
 	if err != nil {
 		panic(err)
 	}
+	events := newAdminEventHub()
 	return &Service{
 		config:    config,
 		store:     store,
@@ -70,7 +72,8 @@ func NewService(config Config, store *Store, tailscale TailscaleAPI, logger *log
 		pow:       NewPoWManager(),
 		cipher:    credentialCipher,
 		dummyHash: dummyHash,
-		logger:    logger,
+		logger:    &structuredLogger{base: logger, events: events},
+		events:    events,
 		oauth:     make(map[string]cachedOAuthToken),
 	}
 }
@@ -140,6 +143,14 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleTailscaleCredentials(w, r)
 	case r.URL.Path == "/v1/pairing-codes":
 		s.handlePairingCode(w, r)
+	case r.URL.Path == "/v1/admin/console":
+		s.handleAdminConsole(w, r)
+	case r.URL.Path == "/v1/admin/console/stream":
+		s.handleAdminEventStream(w, r, "state")
+	case r.URL.Path == "/v1/admin/logs/recent":
+		s.handleAdminRecentLogs(w, r)
+	case r.URL.Path == "/v1/admin/logs/stream":
+		s.handleAdminEventStream(w, r, "log")
 	case r.URL.Path == "/v1/sessions":
 		s.handleStartSession(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/sessions/"):
@@ -172,6 +183,12 @@ type diagnosticResponseWriter struct {
 func (w *diagnosticResponseWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *diagnosticResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func diagnosticRoute(requestPath string) string {
@@ -236,14 +253,20 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 	createdAt := time.Now()
 	expiresAt := createdAt.Add(s.config.CodeTTL)
 	var code string
+	var codeHash string
 	for range 10 {
 		code, err = newPairingCode()
 		if err != nil {
 			break
 		}
-		err = s.store.PutCodeWithCredentialAt(
-			hashPairingCode(s.config.CodePepper, code), request.CredentialID,
-			createdAt, expiresAt, config,
+		codeHash = hashPairingCode(s.config.CodePepper, code)
+		codeCipher, cipherErr := s.cipher.Seal("pairing-code:"+codeHash, code)
+		if cipherErr != nil {
+			err = cipherErr
+			break
+		}
+		err = s.store.PutCodeWithCredentialAtAndCipher(
+			codeHash, request.CredentialID, createdAt, expiresAt, config, codeCipher,
 		)
 		if err == nil {
 			break
@@ -257,6 +280,7 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "pairing_code_create_failed", "生成配对代码失败")
 		return
 	}
+	s.events.publishState("pairing_code_created")
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"code":      code,
 		"expiresAt": expiresAt.UTC().Format(time.RFC3339),
@@ -425,6 +449,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		Routes:               config.EffectiveRoutes(request.GatewayRoute, request.WiFiSubnetRoute),
 		WiFiRoutes:           config.EffectiveWiFiRoutes(request.GatewayRoute, request.WiFiSubnetRoute),
 		Config:               config,
+		PairingCodeHash:      codeHash,
 		ConfigRevision:       1,
 		CreatedAt:            now,
 		ProvisioningDeadline: now.Add(s.config.ProvisioningTTL),
@@ -474,6 +499,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.TouchTailscaleCredential(credentialID, now)
+	s.events.publishState("session_created")
 	writeJSON(w, http.StatusCreated, response)
 }
 
@@ -548,6 +574,12 @@ func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSessionSync(w, r, session)
+	case "logs":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
+			return
+		}
+		s.handleSessionLogs(w, r, session)
 	case "stop":
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
@@ -659,6 +691,7 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	_ = s.store.DeleteSessionStartReplay(session.ID)
+	s.events.publishState("device_attached")
 	writeJSON(w, http.StatusOK, attachedDeviceResponse(session, request.NodeID))
 }
 
@@ -673,10 +706,11 @@ func attachedDeviceResponse(session Session, nodeID string) map[string]any {
 }
 
 type sessionSyncRequest struct {
-	ProtocolVersion       int      `json:"protocolVersion"`
-	AppliedConfigRevision int64    `json:"appliedConfigRevision"`
-	ClientVersion         string   `json:"clientVersion"`
-	ClientCapabilities    []string `json:"clientCapabilities"`
+	ProtocolVersion       int                `json:"protocolVersion"`
+	AppliedConfigRevision int64              `json:"appliedConfigRevision"`
+	ClientVersion         string             `json:"clientVersion"`
+	ClientCapabilities    []string           `json:"clientCapabilities"`
+	ClientState           *clientStateReport `json:"clientState"`
 }
 
 type sessionConfigSnapshot struct {
@@ -726,7 +760,22 @@ func (s *Service) handleSessionSync(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	deadline := s.syncDeadline(session, now)
-	updated, err := s.store.SyncSession(session.ID, now, deadline, request.AppliedConfigRevision)
+	clientStateJSON := ""
+	if request.ClientState != nil {
+		if err := validateClientState(*request.ClientState); err != nil {
+			writeError(w, http.StatusBadRequest, "client_state_invalid", err.Error())
+			return
+		}
+		encoded, err := json.Marshal(request.ClientState)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "client_state_invalid", "客户端状态无效")
+			return
+		}
+		clientStateJSON = string(encoded)
+	}
+	updated, err := s.store.SyncSessionWithState(
+		session.ID, now, deadline, request.AppliedConfigRevision, clientStateJSON,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "session_sync_failed", "同步会话状态失败")
 		return
@@ -735,6 +784,7 @@ func (s *Service) handleSessionSync(w http.ResponseWriter, r *http.Request, sess
 		writeError(w, http.StatusConflict, "session_state_conflict", "会话正在清理或配置 revision 已变化")
 		return
 	}
+	s.events.publishState("session_sync")
 	response := sessionSyncResponse{
 		ProtocolVersion:      protocolVersion,
 		ServerFeatures:       append([]string{}, serverFeatures...),
@@ -774,6 +824,7 @@ func (s *Service) stopSession(w http.ResponseWriter, ctx context.Context, id str
 		writeJSON(w, http.StatusOK, map[string]string{"status": "already-stopped"})
 		return
 	}
+	s.events.publishState("session_cleanup_started")
 	err = s.cleanupSession(ctx, id)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "session_cleanup_failed", "清理 Tailscale 节点失败，请稍后重试")
@@ -815,6 +866,7 @@ func (s *Service) cleanupSession(ctx context.Context, id string) error {
 	if err := s.store.FinishCleanup(id, time.Now(), cleanupErr); err != nil {
 		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("保存清理状态: %w", err))
 	}
+	s.events.publishState("session_cleanup_finished")
 	if cleanupErr == nil {
 		_ = s.store.DeleteSessionStartReplay(id)
 	}

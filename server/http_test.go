@@ -458,11 +458,22 @@ func TestAdminPageIsEmbedded(t *testing.T) {
 	if response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), "创建管理员账号") ||
 		!strings.Contains(response.Body.String(), "Tailscale 管理凭据") ||
+		!strings.Contains(response.Body.String(), "Console 状态") ||
+		!strings.Contains(response.Body.String(), "实时日志") ||
+		!strings.Contains(response.Body.String(), "/v1/admin/console/stream") ||
+		!strings.Contains(response.Body.String(), "/v1/admin/logs/stream") ||
 		!strings.Contains(response.Body.String(), `id="tailscale-ip"`) ||
 		!strings.Contains(response.Body.String(), managedDeviceTag) ||
 		!strings.Contains(response.Body.String(), "https://console.tailscale.com/admin/settings/trust-credentials/add") ||
 		!strings.Contains(response.Body.String(), `id="credential-add-form" class="field-row" hidden`) ||
-		!strings.Contains(response.Body.String(), `href="#top" data-section="templates" aria-current="location"`) ||
+		!strings.Contains(response.Body.String(), `id="sidebar-toggle" class="brand"`) ||
+		!strings.Contains(response.Body.String(), `data-nav-group="config"`) ||
+		!strings.Contains(response.Body.String(), `class="nav-label">生成授权码</span>`) ||
+		!strings.Contains(response.Body.String(), `class="nav-submenu" data-nav-submenu="config"`) ||
+		!strings.Contains(response.Body.String(), `data-nav-group="console"`) ||
+		!strings.Contains(response.Body.String(), `class="nav-label">控制台</span>`) ||
+		!strings.Contains(response.Body.String(), `data-nav-group="logs"`) ||
+		!strings.Contains(response.Body.String(), `class="nav-label">日志</span>`) ||
 		!strings.Contains(response.Body.String(), "/assets/mark.svg") ||
 		strings.Contains(response.Body.String(), "本地 PoW 验证 · 不依赖第三方验证码服务") ||
 		strings.Contains(response.Body.String(), "admin-token") ||
@@ -482,8 +493,9 @@ func TestAdminPageIsEmbedded(t *testing.T) {
 	service.Handler().ServeHTTP(markResponse, markRequest)
 	if markResponse.Code != http.StatusOK ||
 		markResponse.Header().Get("Content-Type") != "image/svg+xml" ||
+		markResponse.Header().Get("Cache-Control") != adminMarkCacheControl ||
 		!strings.Contains(markResponse.Body.String(), "<circle") {
-		t.Fatalf("管理页面图标没有正确嵌入: code=%d contentType=%q", markResponse.Code, markResponse.Header().Get("Content-Type"))
+		t.Fatalf("管理页面图标没有正确嵌入或缓存策略错误: code=%d contentType=%q cacheControl=%q", markResponse.Code, markResponse.Header().Get("Content-Type"), markResponse.Header().Get("Cache-Control"))
 	}
 }
 
@@ -520,7 +532,9 @@ func TestAPIMetaAndStructuredErrors(t *testing.T) {
 	service.Handler().ServeHTTP(metaResponse, metaRequest)
 	if metaResponse.Code != http.StatusOK ||
 		!strings.Contains(metaResponse.Body.String(), `"protocolVersion":1`) ||
-		!strings.Contains(metaResponse.Body.String(), `"session-sync-v1"`) {
+		!strings.Contains(metaResponse.Body.String(), `"session-sync-v1"`) ||
+		!strings.Contains(metaResponse.Body.String(), `"client-state-report-v1"`) ||
+		!strings.Contains(metaResponse.Body.String(), `"client-logs-v1"`) {
 		t.Fatalf("API meta 响应错误: %d %s", metaResponse.Code, metaResponse.Body.String())
 	}
 

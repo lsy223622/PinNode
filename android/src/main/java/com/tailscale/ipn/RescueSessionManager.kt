@@ -25,6 +25,8 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -193,6 +195,9 @@ class RescueSessionManager(private val app: App) {
     const val KEY_PENDING_CLEANUPS = "pinnode_pending_cleanups"
     const val PROTOCOL_VERSION = 1
     const val SESSION_SYNC_FEATURE = "session-sync-v1"
+    const val CLIENT_STATE_FEATURE = "client-state-report-v1"
+    const val CLIENT_LOG_FEATURE = "client-logs-v1"
+    const val CLIENT_LOG_BATCH_SIZE = 8
 
     fun netfilterModeValue(value: String): Int? =
         when (value) {
@@ -305,6 +310,7 @@ class RescueSessionManager(private val app: App) {
       val appliedConfigRevision: Long,
       val clientVersion: String,
       val clientCapabilities: List<String>,
+      val clientState: ClientStateReport? = null,
   )
 
   @Serializable
@@ -365,6 +371,13 @@ class RescueSessionManager(private val app: App) {
   private var timedExitJob: Job? = null
   private var syncJob: Job? = null
   private var sessionStateJob: Job? = null
+  private var clientLogUploadJob: Job? = null
+  private var telemetrySessionID: String? = null
+  private val clientLogWake = Channel<Unit>(Channel.CONFLATED)
+  private val clientStateWake = Channel<Unit>(Channel.CONFLATED)
+  private val clientLogFlushMutex = Mutex()
+  private val clientLogBuffer = ClientLogBuffer()
+  @Volatile private var lastClientError = ""
   private val _sessionState = MutableStateFlow(RescueSessionState())
   val sessionState: StateFlow<RescueSessionState> = _sessionState.asStateFlow()
   private val _vpnPermissionRequests = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
@@ -372,6 +385,7 @@ class RescueSessionManager(private val app: App) {
   @Volatile private var pendingVpnPermission: CompletableDeferred<Boolean>? = null
 
   init {
+    TSLog.pinNodeLogSink = { entry -> onPinNodeLog(entry) }
     restoreSession()
     monitorNetworkExitPolicy()
     app.applicationScope.launch { retryPendingCleanup() }
@@ -465,6 +479,7 @@ class RescueSessionManager(private val app: App) {
           persistSession(pending)
           startSessionStateMonitor(pending)
           scheduleTimedExit(pending)
+          startClientTelemetry(pending)
           startSync(pending)
           Result.success(route)
         } catch (error: Throwable) {
@@ -491,7 +506,9 @@ class RescueSessionManager(private val app: App) {
 
   suspend fun stop(): Result<Unit> = mutex.withLock { stopLocked() }
 
-  fun onAppTerminated() = Unit
+  fun onAppTerminated() {
+    stopClientTelemetry()
+  }
 
   fun shouldExitOnAppClose(): Boolean = activeSession?.config?.exitPolicy?.onAppClose == true
 
@@ -511,6 +528,7 @@ class RescueSessionManager(private val app: App) {
 
       // Persist the terminal state before the first asynchronous cleanup. Some
       // Android variants kill the process immediately after onTaskRemoved returns.
+      finishClientTelemetry(session)
       persistPendingCleanup(session)
       activeSession = null
       timedExitJob?.cancel()
@@ -532,6 +550,7 @@ class RescueSessionManager(private val app: App) {
   private suspend fun stopLocked(): Result<Unit> {
     val session = activeSession
     if (session == null) {
+      stopClientTelemetry()
       app.setRescueRoutes(null)
       app.setRescueMode(false)
       clearPersistedSession()
@@ -539,6 +558,7 @@ class RescueSessionManager(private val app: App) {
       _sessionState.value = RescueSessionState()
       return Result.success(Unit)
     }
+    finishClientTelemetry(session)
     persistPendingCleanup(session)
     activeSession = null
     timedExitJob?.cancel()
@@ -617,6 +637,7 @@ class RescueSessionManager(private val app: App) {
     app.setRescueMode(restored.config.networkMode == "cellular")
     startSessionStateMonitor(restored)
     scheduleTimedExit(restored)
+    startClientTelemetry(restored)
     startSync(restored)
     if (restored.config.vpnEnabled && VpnService.prepare(app) == null) {
       app.startVPN()
@@ -718,17 +739,112 @@ class RescueSessionManager(private val app: App) {
         .getOrDefault(emptyList())
   }
 
+  private fun onPinNodeLog(entry: TSLog.PinNodeLogEntry) {
+    if (telemetrySessionID == null) return
+    clientLogBuffer.append(
+        ClientLogEntry(
+            timestamp = entry.timestamp,
+            level = entry.level,
+            component = entry.component,
+            message = entry.message,
+        ))
+    if (entry.level == "ERROR") clientLogWake.trySend(Unit)
+  }
+
+  private fun startClientTelemetry(session: ActiveSession) {
+    stopClientTelemetry()
+    TSLog.pinNodeLogSink = { entry -> onPinNodeLog(entry) }
+    telemetrySessionID = session.id
+    clientLogUploadJob =
+        app.applicationScope.launch {
+          while (activeSession?.id == session.id && telemetrySessionID == session.id) {
+            withTimeoutOrNull(TimeUnit.SECONDS.toMillis(5)) { clientLogWake.receive() }
+            val current = activeSession?.takeIf { it.id == session.id } ?: return@launch
+            flushClientLogs(current)
+          }
+        }
+  }
+
+  private fun stopClientTelemetry() {
+    clientLogUploadJob?.cancel()
+    clientLogUploadJob = null
+    telemetrySessionID = null
+    TSLog.pinNodeLogSink = null
+  }
+
+  private suspend fun finishClientTelemetry(session: ActiveSession) {
+    clientLogUploadJob?.cancelAndJoin()
+    clientLogUploadJob = null
+    runCatching { flushClientLogs(session) }
+    telemetrySessionID = null
+    TSLog.pinNodeLogSink = null
+  }
+
+  private suspend fun flushClientLogs(session: ActiveSession) {
+    clientLogFlushMutex.withLock {
+      val batch = clientLogBuffer.snapshot(CLIENT_LOG_BATCH_SIZE)
+      if (batch.isEmpty()) return
+      try {
+        postJson<Unit, ClientLogsRequest>(
+            "v1/sessions/${session.id}/logs",
+            ClientLogsRequest(batch.map { it.entry }),
+            session.token,
+            session.serverUrl.ifBlank { configuredServerUrl() },
+        )
+        clientLogBuffer.acknowledge(batch.map { it.id })
+        lastClientError = ""
+      } catch (error: Throwable) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        lastClientError = error::class.simpleName.orEmpty().take(256)
+      }
+    }
+  }
+
+  private fun buildClientStateReport(): ClientStateReport {
+    val backendState = Notifier.state.value
+    val prefs = Notifier.prefs.value
+    val node = Notifier.netmap.value?.SelfNode
+    val network = app.rescueNetworkState().value
+    val session = activeSession
+    val health = Notifier.health.value?.Warnings.orEmpty().keys.sorted().take(32)
+    return ClientStateReport(
+        backendState = backendState.name.lowercase(),
+        tailscaleRunning = backendState == Ipn.State.Running,
+        vpnEnabled = prefs?.WantRunning ?: _sessionState.value.vpnEnabled,
+        networkMode = session?.config?.networkMode ?: _sessionState.value.networkMode,
+        tailscalePath = network.tailscalePath.name.lowercase(),
+        wifiConnected = network.wifi.connected,
+        cellularConnected = network.cellular.connected,
+        internetAvailable = network.wifi.internetAvailable || network.cellular.internetAvailable,
+        interfaceName = (network.wifi.interfaceName ?: network.cellular.interfaceName).orEmpty(),
+        tailscaleIps = node?.Addresses.orEmpty().take(32).map { it.substringBefore('/') },
+        allowedIps = node?.AllowedIPs.orEmpty().take(32),
+        advertisedRoutes = prefs?.AdvertiseRoutes.orEmpty().take(32),
+        deviceName = node?.displayName.orEmpty(),
+        deviceModel = node?.Hostinfo?.DeviceModel.orEmpty(),
+        os = node?.Hostinfo?.OS.orEmpty(),
+        osVersion = node?.Hostinfo?.OSVersion.orEmpty(),
+        health = health,
+        lastError = lastClientError,
+    )
+  }
+
   private fun startSessionStateMonitor(session: ActiveSession) {
     stopSessionStateMonitor()
     applySessionState(session)
     sessionStateJob =
         app.applicationScope.launch {
-          combine(Notifier.state, Notifier.prefs, Notifier.netmap) { backendState, prefs, netmap ->
+          combine(Notifier.state, Notifier.prefs, Notifier.netmap, Notifier.health) {
+                  backendState,
+                  prefs,
+                  netmap,
+                  _ ->
                 buildSessionState(session, backendState, prefs, netmap)
               }
               .collect { state ->
                 if (activeSession?.id == session.id) {
                   _sessionState.value = state
+                  clientStateWake.trySend(Unit)
                 }
               }
         }
@@ -799,8 +915,14 @@ class RescueSessionManager(private val app: App) {
     var intervalSeconds = session.syncIntervalSeconds.coerceIn(15, 300)
     syncJob =
         app.applicationScope.launch {
+          var firstSync = true
           while (activeSession?.id == session.id) {
-            delay(TimeUnit.SECONDS.toMillis(intervalSeconds))
+            if (!firstSync) {
+              withTimeoutOrNull(TimeUnit.SECONDS.toMillis(intervalSeconds)) {
+                clientStateWake.receive()
+              }
+            }
+            firstSync = false
             val current = activeSession?.takeIf { it.id == session.id } ?: return@launch
             try {
               val response =
@@ -810,7 +932,13 @@ class RescueSessionManager(private val app: App) {
                           protocolVersion = PROTOCOL_VERSION,
                           appliedConfigRevision = current.configRevision,
                           clientVersion = BuildConfig.VERSION_NAME,
-                          clientCapabilities = listOf(SESSION_SYNC_FEATURE),
+                          clientCapabilities =
+                              listOf(
+                                  SESSION_SYNC_FEATURE,
+                                  CLIENT_STATE_FEATURE,
+                                  CLIENT_LOG_FEATURE,
+                              ),
+                          clientState = buildClientStateReport(),
                       ),
                       current.token,
                       current.serverUrl.ifBlank { configuredServerUrl() },
@@ -826,11 +954,13 @@ class RescueSessionManager(private val app: App) {
                 }
               }
               intervalSeconds = response.nextSyncAfterSeconds.coerceIn(15, 300)
+              lastClientError = ""
             } catch (error: Throwable) {
               if (error is PinNodeApiException && error.status in setOf(404, 409, 410)) {
                 app.applicationScope.launch { stop() }
                 return@launch
               }
+              lastClientError = error::class.simpleName.orEmpty().take(256)
               TSLog.e(TAG, "PinNode 会话同步失败: ${error::class.simpleName}")
             }
           }
@@ -876,6 +1006,7 @@ class RescueSessionManager(private val app: App) {
     app.applicationScope.launch {
       var previous = app.rescueNetworkState().value
       app.rescueNetworkState().collect { current ->
+        if (activeSession != null) clientStateWake.trySend(Unit)
         val policy = activeSession?.config?.exitPolicy?.networkChange.orEmpty()
         val shouldExit =
             when (policy) {
@@ -1179,8 +1310,11 @@ class RescueSessionManager(private val app: App) {
   }
 
   private fun validateApiCompatibility(protocol: Int, features: List<String>) {
-    if (protocol != PROTOCOL_VERSION || SESSION_SYNC_FEATURE !in features) {
-      throw PinNodeApiConfigurationException("服务器不支持此客户端所需的会话同步协议。")
+    if (protocol != PROTOCOL_VERSION ||
+        SESSION_SYNC_FEATURE !in features ||
+        CLIENT_STATE_FEATURE !in features ||
+        CLIENT_LOG_FEATURE !in features) {
+      throw PinNodeApiConfigurationException("服务器不支持此客户端所需的会话状态与日志协议。")
     }
   }
 

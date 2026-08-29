@@ -20,6 +20,8 @@ var serverFeatures = []string{
 	"idempotent-session-start-v1",
 	"revisioned-session-config-v1",
 	"session-sync-v1",
+	"client-state-report-v1",
+	"client-logs-v1",
 	"structured-errors-v1",
 }
 

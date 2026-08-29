@@ -26,12 +26,23 @@ type OAuthAccessToken struct {
 }
 
 type Device struct {
-	ID          string    `json:"id"`
-	NodeID      string    `json:"nodeId"`
-	Hostname    string    `json:"hostname"`
-	Created     time.Time `json:"created"`
-	Tags        []string  `json:"tags"`
-	IsEphemeral bool      `json:"isEphemeral"`
+	ID               string    `json:"id"`
+	NodeID           string    `json:"nodeId"`
+	Name             string    `json:"name"`
+	Hostname         string    `json:"hostname"`
+	Created          time.Time `json:"created"`
+	LastSeen         time.Time `json:"lastSeen"`
+	Tags             []string  `json:"tags"`
+	Addresses        []string  `json:"addresses"`
+	Online           bool      `json:"online"`
+	Authorized       bool      `json:"authorized"`
+	IsEphemeral      bool      `json:"isEphemeral"`
+	OS               string    `json:"os"`
+	ClientVersion    string    `json:"clientVersion"`
+	AdvertisedRoutes []string  `json:"advertisedRoutes"`
+	EnabledRoutes    []string  `json:"enabledRoutes"`
+	IsExitNode       bool      `json:"isExitNode"`
+	IsSubnetRouter   bool      `json:"isSubnetRouter"`
 }
 
 // TailscaleAPI 是服务端需要的最小控制面接口，便于不接触真实 tailnet 地测试清理逻辑。

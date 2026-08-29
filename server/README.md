@@ -67,6 +67,13 @@ token 最长 90 天，适合快速配置。以后登录只需从列表选择，�
 Allow LAN、SNAT/过滤、Hostname、SSH/Web client、posture、RemoteConfig、
 App Connector 和 Netfilter 等偏好。
 
+登录后的 `Console 状态` 页面通过 `/v1/admin/console` 展示仍在有效期内的待兑换 PIN、倒计时、配置摘要和完整只读配置，
+并展示活动会话的 PinNode 状态上报、Tailscale 节点地址/在线状态、路由、健康原因和配置 revision。
+`实时日志` 页面通过 `/v1/admin/logs/recent`、`/v1/admin/logs/stream` 查看服务端和客户端结构化日志，支持级别、来源、组件、会话/节点和文本筛选，
+以及暂停、有界待处理计数和底部自动滚动。两个 SSE 接口都使用同一个递增序列和 `Last-Event-ID` 续传；窗口丢失时客户端重新读取快照。
+日志仅保存在当前服务进程的 2048 项环形缓冲中，不写入 SQLite，也不依赖 Redis/Kafka。客户端日志在 Android 上传前、服务端入环前各脱敏一次，
+客户端离线队列同样有条数和大小上限，上传失败不会终止会话。
+
 `routes` 是交给 Tailscale 广告并由服务端启用的完整列表；`wifiRoutes` 只包含 Android
 应绑定到 Wi-Fi 的 LAN 前缀。Exit Node 的 `0.0.0.0/0` 和 `::/0` 不会进入
 `wifiRoutes`。

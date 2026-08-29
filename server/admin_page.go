@@ -14,6 +14,8 @@ var adminPage []byte
 //go:embed web/mark.svg
 var adminMark []byte
 
+const adminMarkCacheControl = "public, max-age=86400"
+
 func (s *Service) serveAdminPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
@@ -41,6 +43,7 @@ func (s *Service) serveAdminMark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", adminMarkCacheControl)
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	_, _ = w.Write(adminMark)
 }

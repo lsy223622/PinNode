@@ -68,50 +68,146 @@
       border-radius: 8px; background: var(--surface-muted); color: var(--muted); font-size: 12px;
     }
     @keyframes pulse { to { opacity: .25; } }
-    .app-shell { min-height: 100vh; }
+    .app-shell {
+      --sidebar-width: 240px; --sidebar-duration: 220ms;
+      --sidebar-ease: cubic-bezier(.2, .8, .2, 1); min-height: 100vh;
+    }
+    .app-shell.sidebar-collapsed { --sidebar-width: 64px; }
     .sidebar {
-      position: fixed; inset: 0 auto 0 0; z-index: 10; display: flex; width: 240px;
-      flex-direction: column; border-right: 1px solid var(--border-soft); background: var(--sidebar);
+      position: fixed; inset: 0 auto 0 0; z-index: 10; display: flex; width: var(--sidebar-width);
+      flex-direction: column; overflow: hidden; border-right: 1px solid var(--border-soft); background: var(--sidebar);
+      transition: width var(--sidebar-duration) var(--sidebar-ease), box-shadow var(--sidebar-duration) ease;
     }
+    .sidebar.is-collapsed { width: 64px; }
     .brand {
-      display: flex; min-height: 64px; align-items: center; gap: 11px; padding: 0 18px;
-      border-bottom: 1px solid var(--border-soft); color: var(--text); font-size: 15px;
-      font-weight: 700; letter-spacing: -0.01em; text-decoration: none;
+      display: flex; width: 100%; min-height: 64px; align-items: center; gap: 11px; margin: 0;
+      padding: 0 19px; border: 0; border-bottom: 1px solid var(--border-soft);
+      background: transparent; color: var(--text); cursor: pointer; font-size: 15px;
+      font-weight: 700; letter-spacing: -0.01em; text-align: left; transition: padding var(--sidebar-duration) var(--sidebar-ease);
     }
+    .brand:hover { background: var(--surface-muted); }
+    .brand:focus-visible { outline: 3px solid rgba(75, 112, 204, 0.3); outline-offset: -3px; }
     .brand-mark {
       width: 26px; height: 26px; flex: none; border-radius: 6px;
     }
+    .brand-label {
+      min-width: 0; max-width: 120px; overflow: hidden; opacity: 1; text-overflow: ellipsis;
+      visibility: visible; white-space: nowrap;
+      transition: max-width var(--sidebar-duration) var(--sidebar-ease), opacity 140ms ease,
+        visibility 0s linear 0s;
+    }
     .build-badge {
-      padding: 2px 5px; border: 1px solid var(--warning-border); border-radius: 4px;
-      background: var(--warning-bg); color: var(--warning); font-size: 9px; font-weight: 800;
-      letter-spacing: 0.08em; line-height: 1.2;
+      max-width: 80px; overflow: hidden; padding: 2px 5px; border: 1px solid var(--warning-border);
+      border-radius: 4px; background: var(--warning-bg); color: var(--warning); font-size: 9px;
+      font-weight: 800; letter-spacing: 0.08em; line-height: 1.2; white-space: nowrap;
+      transition: max-width var(--sidebar-duration) var(--sidebar-ease), padding 140ms ease,
+        opacity 140ms ease, visibility 0s linear 0s;
     }
     .build-badge:empty { display: none; }
-    .nav { display: grid; gap: 2px; padding: 18px 10px; }
-    .nav-title {
-      padding: 0 10px 7px; color: var(--faint); font-size: 11px; font-weight: 700;
-      letter-spacing: 0.08em; text-transform: uppercase;
+    .nav {
+      display: grid; flex: 1; min-height: 0; align-content: start; gap: 2px;
+      overflow-y: auto; padding: 18px 10px;
     }
-    .nav a {
-      display: flex; min-height: 34px; align-items: center; gap: 10px; padding: 7px 10px;
-      border-radius: 7px; color: var(--muted); font-weight: 520; text-decoration: none;
+    .nav-group { display: grid; align-content: start; gap: 2px; }
+    .nav-page, .nav-subpage {
+      display: flex; height: 34px; min-height: 34px; align-items: center; gap: 10px; overflow: hidden;
+      padding: 7px 10px; border-radius: 7px; color: var(--muted); font-weight: 520;
+      text-decoration: none; white-space: nowrap;
     }
-    .nav a:hover { background: var(--surface-muted); color: var(--text); }
-    .nav a[aria-current="location"] { background: var(--surface-hover); color: var(--text); font-weight: 650; }
+    .nav-page {
+      justify-content: flex-start; padding-right: 14px; padding-left: 14px;
+      transition: none;
+    }
+    .nav-page:hover, .nav-subpage:hover { background: var(--surface-muted); color: var(--text); }
+    .nav-page[aria-current="page"] { background: var(--surface-hover); color: var(--text); font-weight: 650; }
+    .nav-submenu {
+      display: grid; grid-template-rows: 0fr; gap: 0; margin: 0; padding: 0; overflow: hidden;
+      box-shadow: inset 0 -1px 0 transparent; opacity: 0; visibility: hidden; pointer-events: none;
+      transition: grid-template-rows var(--sidebar-duration) var(--sidebar-ease),
+        margin var(--sidebar-duration) var(--sidebar-ease), padding var(--sidebar-duration) var(--sidebar-ease),
+        box-shadow 140ms ease, opacity 140ms ease, visibility 0s linear var(--sidebar-duration);
+    }
+    .nav-submenu-inner {
+      display: grid; min-height: 0; gap: 2px; overflow: hidden; transform: translateY(-4px);
+      transition: transform var(--sidebar-duration) var(--sidebar-ease);
+    }
+    .nav-group.is-open .nav-submenu {
+      grid-template-rows: 1fr; margin: 0 0 6px; padding: 0 0 2px;
+      box-shadow: inset 0 -1px 0 var(--border-soft); opacity: 1; visibility: visible; pointer-events: auto;
+      transition: grid-template-rows var(--sidebar-duration) var(--sidebar-ease),
+        margin var(--sidebar-duration) var(--sidebar-ease), padding var(--sidebar-duration) var(--sidebar-ease),
+        box-shadow 140ms ease, opacity 140ms ease, visibility 0s linear 0s;
+    }
+    .nav-group.is-open .nav-submenu-inner { transform: translateY(0); }
+    .nav-subpage { height: 32px; min-height: 32px; padding: 6px 10px 6px 36px; font-size: 13px; }
+    .nav-subpage[aria-current="location"] { color: var(--text); font-weight: 650; }
+    .nav-label {
+      min-width: 0; max-width: 160px; flex: 1; overflow: hidden; opacity: 1; text-overflow: ellipsis;
+      visibility: visible; white-space: nowrap;
+      transition: max-width var(--sidebar-duration) var(--sidebar-ease), opacity 140ms ease,
+        visibility 0s linear 0s;
+    }
+    .nav-page .nav-chevron {
+      width: 13px; height: 13px; flex: none; margin-left: auto; opacity: 1; visibility: visible;
+      transition: width var(--sidebar-duration) var(--sidebar-ease), margin-left var(--sidebar-duration) var(--sidebar-ease),
+        opacity 140ms ease, transform 140ms ease, visibility 0s linear 0s;
+    }
+    .nav-page[aria-expanded="true"] .nav-chevron { transform: rotate(180deg); }
     .nav svg { width: 16px; height: 16px; flex: none; }
+    .sidebar.is-collapsed .brand { justify-content: flex-start; }
+    .sidebar.is-collapsed .brand-label,
+    .sidebar.is-collapsed .nav-label,
+    .sidebar.is-collapsed .sidebar-status-label,
+    .sidebar.is-collapsed .build-badge {
+      max-width: 0; opacity: 0; visibility: hidden;
+    }
+    .sidebar.is-collapsed .build-badge { padding-right: 0; padding-left: 0; border-width: 0; }
+    .sidebar.is-collapsed .nav-chevron { width: 0; margin-left: 0; opacity: 0; visibility: hidden; }
+    .sidebar.is-collapsed .nav { padding-right: 10px; padding-left: 10px; }
+    .sidebar.is-collapsed .nav-submenu {
+      grid-template-rows: 0fr; margin: 0; padding: 0; box-shadow: inset 0 -1px 0 transparent;
+      opacity: 0; visibility: hidden; pointer-events: none;
+      transition: grid-template-rows var(--sidebar-duration) var(--sidebar-ease),
+        margin var(--sidebar-duration) var(--sidebar-ease), padding var(--sidebar-duration) var(--sidebar-ease),
+        box-shadow 140ms ease, opacity 140ms ease, visibility 0s linear var(--sidebar-duration);
+    }
+    .sidebar.is-collapsed .nav-submenu-inner { transform: translateY(-4px); }
+    .sidebar.is-collapsed .sidebar-footer {
+      padding-right: calc(50% - 3.5px); padding-left: calc(50% - 3.5px);
+    }
+    .sidebar.is-collapsed .status-dot { margin-right: 0; }
     .sidebar-footer {
       margin-top: auto; padding: 16px 18px; border-top: 1px solid var(--border-soft);
-      color: var(--muted); font-size: 12px;
+      color: var(--muted); font-size: 12px; transition: padding var(--sidebar-duration) var(--sidebar-ease);
     }
-    .account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; }
+    .sidebar-status { display: flex; min-width: 0; align-items: center; overflow: hidden; white-space: nowrap; }
+    .sidebar-status-label {
+      max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      transition: max-width var(--sidebar-duration) var(--sidebar-ease), opacity 140ms ease,
+        visibility 0s linear 0s;
+    }
+    .account-row {
+      display: flex; max-height: 32px; align-items: center; justify-content: space-between; gap: 8px;
+      margin-top: 9px; overflow: hidden; opacity: 1; visibility: visible;
+      transition: max-height var(--sidebar-duration) var(--sidebar-ease), margin-top var(--sidebar-duration) var(--sidebar-ease),
+        opacity 140ms ease, visibility 0s linear 0s;
+    }
+    .sidebar.is-collapsed .account-row {
+      max-height: 0; margin-top: 0; opacity: 0; visibility: hidden;
+      transition: max-height var(--sidebar-duration) var(--sidebar-ease), margin-top var(--sidebar-duration) var(--sidebar-ease),
+        opacity 140ms ease, visibility 0s linear var(--sidebar-duration);
+    }
     .account-name { min-width: 0; overflow: hidden; color: var(--text); font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
-    .text-button { padding: 3px 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+    .text-button { padding: 3px 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; }
     .text-button:hover { color: var(--text); }
     .status-dot {
       display: inline-block; width: 7px; height: 7px; margin-right: 7px;
       border-radius: 50%; background: var(--success);
     }
-    main { width: calc(100% - 240px); margin-left: 240px; padding: 34px 40px 72px; }
+    main {
+      width: calc(100% - var(--sidebar-width)); margin-left: var(--sidebar-width); padding: 34px 40px 72px;
+      transition: width var(--sidebar-duration) var(--sidebar-ease), margin-left var(--sidebar-duration) var(--sidebar-ease);
+    }
     .content { width: min(100%, 960px); margin: 0 auto; }
     .page-header {
       display: flex; align-items: flex-start; justify-content: space-between;
@@ -215,7 +311,59 @@
     .result-card[data-state="loading"] { color: var(--muted); }
     .result-card[data-state="success"] { border-color: var(--success); background: var(--success-bg); }
     .result-card[data-state="error"] { border-color: var(--danger); color: var(--danger); }
+    .page-view { width: min(100%, 1120px); margin: 0 auto; }
+    .monitor-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .metric-card {
+      min-height: 92px; padding: 15px 17px; border: 1px solid var(--border); border-radius: 10px;
+      background: var(--surface); box-shadow: var(--shadow);
+    }
+    .metric-label { color: var(--muted); font-size: 12px; }
+    .metric-value { display: block; margin-top: 5px; font-size: 26px; font-weight: 720; letter-spacing: -0.03em; }
+    .monitor-columns { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.6fr); gap: 18px; align-items: start; }
+    .monitor-list { display: grid; gap: 10px; padding: 16px 20px 20px; }
+    .monitor-empty { color: var(--muted); }
+    .log-empty { padding: 20px; }
+    .monitor-item { padding: 13px 14px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-muted); }
+    .monitor-item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .monitor-item-title { min-width: 0; font-weight: 680; overflow-wrap: anywhere; }
+    .monitor-item-meta { margin-top: 5px; color: var(--muted); font-size: 12px; }
+    .monitor-item dl { display: grid; grid-template-columns: minmax(100px, .6fr) minmax(0, 1fr); gap: 5px 12px; margin: 12px 0 0; font-size: 12px; }
+    .monitor-item dt { color: var(--muted); }
+    .monitor-item dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+    .status-pill { display: inline-flex; align-items: center; flex: none; min-height: 23px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .status-pill[data-status="Healthy"] { border-color: var(--success); color: var(--success); }
+    .status-pill[data-status="Warning"], .status-pill[data-status="Ending"], .status-pill[data-status="Cleaning"] { border-color: var(--warning-border); color: var(--warning); }
+    .status-pill[data-status="Offline"] { border-color: var(--danger); color: var(--danger); }
+    .monitor-item details { margin-top: 12px; }
+    .monitor-item summary { color: var(--primary); cursor: pointer; font-size: 12px; font-weight: 620; }
+    .json-block { max-height: 320px; margin: 8px 0 0; padding: 10px; overflow: auto; border-radius: 6px; background: var(--surface); color: var(--muted); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 15px 20px; border-bottom: 1px solid var(--border-soft); }
+    .toolbar-field { display: grid; gap: 5px; min-width: 130px; color: var(--muted); font-size: 12px; }
+    .toolbar-field input, .toolbar-field select { width: 100%; min-height: 36px; padding: 7px 9px; }
+    .toolbar-spacer { flex: 1; }
+    .log-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .log-new { min-height: 34px; padding: 6px 10px; border: 1px solid var(--primary); border-radius: 7px; background: transparent; color: var(--primary); cursor: pointer; font-weight: 650; }
+    .log-new[hidden] { display: none; }
+    .check-label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .log-table-wrap { max-height: 620px; overflow: auto; }
+    .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .log-table th, .log-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-soft); text-align: left; vertical-align: top; }
+    .log-table th { position: sticky; top: 0; z-index: 1; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .log-table td:first-child { width: 174px; color: var(--muted); white-space: nowrap; }
+    .log-table td:nth-child(2) { width: 64px; font-weight: 700; }
+    .log-table td:nth-child(3) { width: 90px; color: var(--muted); }
+    .log-table td:nth-child(4), .log-table td:nth-child(5) { max-width: 210px; overflow-wrap: anywhere; }
+    .log-table td:last-child { min-width: 260px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .log-level-ERROR { color: var(--danger); }
+    .log-level-WARN { color: var(--warning); }
+    .log-level-DEBUG { color: var(--muted); }
+    .stream-status { color: var(--muted); font-size: 12px; }
+    .stream-status[data-state="error"] { color: var(--danger); }
     .mobile-submit { display: none; }
+    @media (max-width: 900px) {
+      .monitor-columns { grid-template-columns: 1fr; }
+      .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     @media (prefers-color-scheme: dark) {
       :root {
         --page: #181717; --sidebar: #1f1e1e; --surface: #232222; --surface-muted: #2e2d2d;
@@ -231,12 +379,17 @@
     }
     @media (max-width: 760px) {
       .sidebar {
-        position: sticky; width: 100%; height: 58px; border-right: 0;
-        border-bottom: 1px solid var(--border-soft);
+        position: fixed; width: 58px; height: 100dvh; min-height: 100vh; border-right: 1px solid var(--border-soft);
+        border-bottom: 0;
       }
-      .brand { min-height: 58px; border-bottom: 0; }
-      .nav, .sidebar-footer { display: none; }
-      main { width: 100%; margin-left: 0; padding: 24px 16px 52px; }
+      .sidebar.is-collapsed { width: 58px; }
+      .sidebar:not(.is-collapsed) { width: min(280px, calc(100vw - 20px)); }
+      .brand { min-height: 58px; padding-right: 16px; padding-left: 16px; }
+      .nav-page { padding-right: 11px; padding-left: 11px; }
+      .sidebar:not(.is-collapsed) { box-shadow: 8px 0 24px rgba(35, 34, 34, 0.14); }
+      main {
+        width: 100%; margin-left: 0; padding: 82px 16px 52px 74px; transition: none;
+      }
       .page-header { display: block; }
       .page-header .primary-button { display: none; }
       h1 { font-size: 23px; }
@@ -249,6 +402,9 @@
       .auth-form { padding: 22px 18px; }
       .credential-actions { grid-template-columns: 1fr; }
       .credential-secret-fields { grid-template-columns: 1fr; }
+      .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .monitor-columns { grid-template-columns: 1fr; }
+      .log-table-wrap { margin: 0 -1px; }
     }
   </style>
 </head>
@@ -277,30 +433,103 @@
   </div>
 
   <div id="app-view" class="app-shell" hidden>
-    <aside class="sidebar">
-      <a class="brand" href="#top" aria-label="PinNode 管理控制台">
+    <aside class="sidebar is-collapsed">
+      <button id="sidebar-toggle" class="brand" type="button" aria-label="展开管理菜单" aria-expanded="false" title="展开管理菜单">
         <img class="brand-mark" src="/assets/mark.svg" alt="">
-        <span>PinNode</span>
+        <span class="brand-label">PinNode</span>
         <span class="build-badge">{{BUILD_BADGE}}</span>
-      </a>
-      <nav class="nav" aria-label="配置分区">
-        <span class="nav-title">临时节点</span>
-        <a href="#top" data-section="templates" aria-current="location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8m-8 4h5"/></svg>快速模板</a>
-        <a href="#authentication"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3"/><rect x="4" y="10" width="16" height="11" rx="2"/></svg>Tailscale 凭据</a>
-        <a href="#client"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 19v2m8-2v2M8 9h8"/></svg>客户端行为</a>
-        <a href="#router"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.3 10.9 7.4-3.8m-7.4 6 7.4 3.8"/></svg>Subnet Router</a>
-        <a href="#exit-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12h13m-5-5 5 5-5 5"/><path d="M20 5v14"/></svg>Exit Node</a>
-        <a href="#advanced"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>高级偏好</a>
-        <a href="#lifecycle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>退出策略</a>
+      </button>
+      <nav class="nav" aria-label="管理页面">
+        <div class="nav-group is-open" data-nav-group="config">
+          <a class="nav-page" href="#top" data-page="config" data-section="templates" aria-current="page" aria-expanded="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8m-8 4h5"/></svg>
+            <span class="nav-label">生成授权码</span>
+            <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </a>
+          <div class="nav-submenu" data-nav-submenu="config" aria-hidden="false">
+            <div class="nav-submenu-inner">
+              <a class="nav-subpage" href="#top" data-section="templates"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8m-8 4h5"/></svg>快速模板</a>
+              <a class="nav-subpage" href="#authentication" data-section="authentication"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3"/><rect x="4" y="10" width="16" height="11" rx="2"/></svg>Tailscale 凭据</a>
+              <a class="nav-subpage" href="#client" data-section="client"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 19v2m8-2v2M8 9h8"/></svg>客户端行为</a>
+              <a class="nav-subpage" href="#router" data-section="router"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.3 10.9 7.4-3.8m-7.4 6 7.4 3.8"/></svg>Subnet Router</a>
+              <a class="nav-subpage" href="#exit-node" data-section="exit-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12h13m-5-5 5 5-5 5"/><path d="M20 5v14"/></svg>Exit Node</a>
+              <a class="nav-subpage" href="#advanced" data-section="advanced"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>高级偏好</a>
+              <a class="nav-subpage" href="#lifecycle" data-section="lifecycle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>退出策略</a>
+            </div>
+          </div>
+        </div>
+        <div class="nav-group" data-nav-group="console">
+          <a class="nav-page" href="#console" data-page="console"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 15v-3m5 3V8m5 7v-6"/></svg><span class="nav-label">控制台</span></a>
+        </div>
+        <div class="nav-group" data-nav-group="logs">
+          <a class="nav-page" href="#logs" data-page="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 5h14M5 9h14M5 13h9M5 17h6"/><circle cx="17" cy="17" r="3"/></svg><span class="nav-label">日志</span></a>
+        </div>
       </nav>
       <div class="sidebar-footer">
-        <div><span class="status-dot"></span>配置服务已就绪</div>
+        <div class="sidebar-status"><span class="status-dot"></span><span class="sidebar-status-label">配置服务已就绪</span></div>
         <div class="account-row"><span id="account-name" class="account-name"></span><button id="logout-button" class="text-button" type="button">退出登录</button></div>
       </div>
     </aside>
 
     <main id="top">
-      <form id="config-form" class="content">
+      <section id="console-page" class="page-view" data-page-view="console" aria-labelledby="console-title" hidden>
+        <header class="page-header">
+          <div>
+            <h1 id="console-title">Console 状态</h1>
+            <p class="hint">查看尚未兑换的授权码、活动会话、客户端心跳和 Tailscale 控制面快照。</p>
+          </div>
+          <button id="console-refresh" class="primary-button" type="button">刷新状态</button>
+        </header>
+        <div class="monitor-grid" aria-live="polite">
+          <div class="metric-card"><span class="metric-label">待兑换 PIN</span><strong id="console-pending-count" class="metric-value">—</strong></div>
+          <div class="metric-card"><span class="metric-label">活动会话</span><strong id="console-session-count" class="metric-value">—</strong></div>
+          <div class="metric-card"><span class="metric-label">健康节点</span><strong id="console-healthy-count" class="metric-value">—</strong></div>
+          <div class="metric-card"><span class="metric-label">需关注</span><strong id="console-warning-count" class="metric-value">—</strong></div>
+        </div>
+        <div id="console-status" class="stream-status" role="status" aria-live="polite"></div>
+        <div class="monitor-columns">
+          <section class="card" aria-labelledby="pending-title">
+            <div class="card-header"><h2 id="pending-title">待兑换授权码</h2><p class="section-hint">仅显示仍在有效期内的 PIN；过期或已兑换记录不会出现在这里。</p></div>
+            <div id="console-pending" class="monitor-list"><span class="monitor-empty">正在读取…</span></div>
+          </section>
+          <section class="card" aria-labelledby="sessions-title">
+            <div class="card-header"><h2 id="sessions-title">活动会话与节点</h2><p class="section-hint">健康状态同时参考 PinNode 最近上报和 Tailscale 节点状态；两条链路会分别显示。</p></div>
+            <div id="console-sessions" class="monitor-list"><span class="monitor-empty">正在读取…</span></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="logs-page" class="page-view" data-page-view="logs" aria-labelledby="logs-title" hidden>
+        <header class="page-header">
+          <div>
+            <h1 id="logs-title">实时日志</h1>
+            <p class="hint">服务端和客户端日志只保留在当前进程的有界环形缓冲中；客户端上传前已脱敏。</p>
+          </div>
+          <button id="logs-refresh" class="primary-button" type="button">读取最近日志</button>
+        </header>
+        <section class="card">
+          <div class="toolbar">
+            <label class="toolbar-field">级别<select id="log-level-filter"><option value="">全部</option><option value="ERROR">ERROR</option><option value="WARN">WARN</option><option value="INFO">INFO</option><option value="DEBUG">DEBUG</option></select></label>
+            <label class="toolbar-field">来源<input id="log-source-filter" type="text" maxlength="64" placeholder="server / client"></label>
+            <label class="toolbar-field">组件<input id="log-component-filter" type="text" maxlength="128" placeholder="组件名"></label>
+            <label class="toolbar-field">会话 / 节点<input id="log-identity-filter" type="text" maxlength="128" placeholder="ID 或诊断引用"></label>
+            <label class="toolbar-field">文本<input id="log-text-filter" type="text" maxlength="256" placeholder="搜索消息"></label>
+            <span class="toolbar-spacer"></span>
+            <div class="log-actions">
+              <button id="logs-pause" class="secondary-button" type="button">暂停</button>
+              <label class="check-label"><input id="logs-auto-scroll" type="checkbox" checked>自动滚动</label>
+              <button id="logs-new" class="log-new" type="button" hidden>↓ <span id="logs-new-count">0</span> 条新日志</button>
+            </div>
+          </div>
+          <div class="card-header"><span id="logs-status" class="stream-status" role="status" aria-live="polite">正在连接日志流…</span></div>
+          <div id="logs-table-wrap" class="log-table-wrap">
+            <table class="log-table"><thead><tr><th>时间</th><th>级别</th><th>来源</th><th>组件</th><th>会话 / 节点</th><th>消息</th></tr></thead><tbody id="logs-body"></tbody></table>
+            <div id="logs-empty" class="monitor-empty log-empty">暂无符合筛选条件的日志</div>
+          </div>
+        </section>
+      </section>
+
+      <form id="config-form" class="content page-view" data-page-view="config">
         <header class="page-header">
           <div>
             <h1>PinNode 快速配置</h1>
@@ -409,28 +638,90 @@
     const result = $("result");
     const submitButtons = $("config-form").querySelectorAll("button[type=submit]");
     const navigationLinks = [...document.querySelectorAll(".nav a[href^='#']")];
+    const pageLinks = [...document.querySelectorAll(".nav-page")];
+    const sectionLinks = [...document.querySelectorAll(".nav-subpage")];
+    const navGroups = [...document.querySelectorAll("[data-nav-group]")];
+    const sidebar = document.querySelector(".sidebar");
+    const sidebarToggle = $("sidebar-toggle");
+    const pageViews = [...document.querySelectorAll("[data-page-view]")];
     let csrfToken = "";
     let setupMode = false;
     let setupAllowed = true;
     let navigationFrame = 0;
+    let currentPage = "config";
+    let consoleSequence = 0;
+    let consoleData = null;
+    let consoleCountdownTimer = 0;
+    let consoleStream = null;
+    let logsStream = null;
+    let logSequence = 0;
+    let logEntries = [];
+    let logsPaused = false;
+    let pendingLogCount = 0;
+    const maxBrowserLogs = 2048;
+
+    function setSidebarCollapsed(collapsed) {
+      const isCollapsed = Boolean(collapsed);
+      sidebar.classList.toggle("is-collapsed", isCollapsed);
+      $("app-view").classList.toggle("sidebar-collapsed", isCollapsed);
+      sidebarToggle.setAttribute("aria-expanded", String(!isCollapsed));
+      const label = isCollapsed ? "展开管理菜单" : "收起管理菜单";
+      sidebarToggle.setAttribute("aria-label", label);
+      sidebarToggle.title = label;
+      for (const group of navGroups) {
+        const submenu = group.querySelector(".nav-submenu");
+        if (!submenu) continue;
+        const hidden = isCollapsed || group.dataset.navGroup !== currentPage;
+        submenu.toggleAttribute("inert", hidden);
+        submenu.setAttribute("aria-hidden", String(hidden));
+      }
+    }
+
+    function collapseSidebarOnSmallScreen() {
+      if (window.matchMedia("(max-width: 760px)").matches) setSidebarCollapsed(true);
+    }
+
+    sidebarToggle.addEventListener("click", () => {
+      setSidebarCollapsed(!sidebar.classList.contains("is-collapsed"));
+    });
+    setSidebarCollapsed(window.matchMedia("(max-width: 760px)").matches);
+
+    function updateNavigationGroups(page) {
+      for (const group of navGroups) {
+        const active = group.dataset.navGroup === page;
+        const submenu = group.querySelector(".nav-submenu");
+        const pageLink = group.querySelector(".nav-page");
+        group.classList.toggle("is-open", active);
+        if (submenu) {
+          submenu.removeAttribute("hidden");
+          const hidden = !active || sidebar.classList.contains("is-collapsed");
+          submenu.toggleAttribute("inert", hidden);
+          submenu.setAttribute("aria-hidden", String(hidden));
+          pageLink.setAttribute("aria-expanded", String(active));
+        }
+      }
+    }
 
     function updateActiveNavigation() {
       navigationFrame = 0;
       if ($("app-view").hidden) return;
+      for (const link of pageLinks) {
+        if (link.dataset.page === currentPage) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
+      }
+      for (const link of sectionLinks) link.removeAttribute("aria-current");
+      if (currentPage !== "config") return;
       const marker = Math.min(180, window.innerHeight * 0.3);
-      let active = navigationLinks[0];
-      for (const link of navigationLinks) {
+      let active = sectionLinks[0];
+      for (const link of sectionLinks) {
         const section = $(link.dataset.section || link.hash.slice(1));
         if (!section || section.getBoundingClientRect().top > marker) break;
         active = link;
       }
       if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
-        active = navigationLinks[navigationLinks.length - 1];
+        active = sectionLinks[sectionLinks.length - 1];
       }
-      for (const link of navigationLinks) {
-        if (link === active) link.setAttribute("aria-current", "location");
-        else link.removeAttribute("aria-current");
-      }
+      if (active) active.setAttribute("aria-current", "location");
     }
 
     function scheduleNavigationUpdate() {
@@ -440,12 +731,50 @@
     window.addEventListener("scroll", scheduleNavigationUpdate, { passive: true });
     window.addEventListener("resize", scheduleNavigationUpdate);
 
+    function showPage(page, hash = "") {
+      if (!["config", "console", "logs"].includes(page)) page = "config";
+      currentPage = page;
+      updateNavigationGroups(page);
+      for (const view of pageViews) view.hidden = view.dataset.pageView !== page;
+      for (const link of pageLinks) {
+        if (link.dataset.page === page) link.setAttribute("aria-current", "location");
+        else link.removeAttribute("aria-current");
+      }
+      if (page === "console") {
+        loadConsole().then(() => {
+          if (currentPage === "console" && !$('app-view').hidden) openConsoleStream(consoleSequence);
+        });
+      } else if (page === "logs") {
+        loadRecentLogs().then(() => {
+          if (currentPage === "logs" && !$('app-view').hidden) openLogsStream(logSequence);
+        });
+      }
+      if (page === "config" && hash) {
+        const target = $(hash.replace(/^#/, ""));
+        if (target) setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+      } else {
+        window.scrollTo(0, 0);
+      }
+      scheduleNavigationUpdate();
+    }
+
+    navigationLinks.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        const hash = link.hash || "#top";
+        history.replaceState(null, "", hash);
+        showPage(link.dataset.page || "config", hash);
+        collapseSidebarOnSmallScreen();
+      });
+    });
+
     function authStatus(state, text) {
       $("auth-status").dataset.state = state;
       $("auth-status").textContent = text;
     }
 
     function showAuth(state) {
+      closeEventStreams();
       setupMode = Boolean(state.setupRequired);
       setupAllowed = Boolean(state.setupAllowed);
       $("auth-view").hidden = false;
@@ -478,6 +807,9 @@
       $("app-view").hidden = false;
       document.title = "PinNode 快速配置";
       await loadCredentials();
+      if (location.hash === "#console") showPage("console", location.hash);
+      else if (location.hash === "#logs") showPage("logs", location.hash);
+      else showPage("config");
       scheduleNavigationUpdate();
     }
 
@@ -494,6 +826,328 @@
         authStatus("error", error.message);
       }
     }
+
+    function closeEventStreams() {
+      if (consoleStream) consoleStream.close();
+      if (logsStream) logsStream.close();
+      consoleStream = null;
+      logsStream = null;
+    }
+
+    function element(tag, text, className) {
+      const node = document.createElement(tag);
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      if (className) node.className = className;
+      return node;
+    }
+
+    function appendDetail(list, label, content) {
+      list.append(element("dt", label));
+      list.append(element("dd", content === undefined || content === null || content === "" ? "—" : content));
+    }
+
+    function jsonBlock(value) {
+      const block = element("pre", JSON.stringify(value || {}, null, 2), "json-block");
+      return block;
+    }
+
+    function listText(value) {
+      return Array.isArray(value) && value.length ? value.join(", ") : "—";
+    }
+
+    function statusPill(status) {
+      const pill = element("span", status || "Unknown", "status-pill");
+      pill.dataset.status = status || "Unknown";
+      return pill;
+    }
+
+    function formatOptionalDate(value) {
+      return value ? formatLocalDateTime(value) : "—";
+    }
+
+    function renderConsole(payload) {
+      consoleData = payload;
+      consoleSequence = Number(payload.eventSequence) || 0;
+      const counts = payload.counts || {};
+      $("console-pending-count").textContent = String(Number(counts.pending) || 0);
+      $("console-session-count").textContent = String(Number(counts.sessions) || 0);
+      $("console-healthy-count").textContent = String(Number(counts.healthy) || 0);
+      $("console-warning-count").textContent = String((Number(counts.warning) || 0) + (Number(counts.offline) || 0));
+
+      const pendingContainer = $("console-pending");
+      pendingContainer.replaceChildren();
+      if (!payload.pending || !payload.pending.length) {
+        pendingContainer.append(element("span", "没有待兑换授权码。", "monitor-empty"));
+      } else {
+        for (const item of payload.pending) {
+          const card = element("article", undefined, "monitor-item");
+          const header = element("div", undefined, "monitor-item-header");
+          header.append(element("strong", item.codeAvailable ? item.code : "代码密文不可用", "monitor-item-title"));
+          header.append(statusPill("pending"));
+          card.append(header);
+          const meta = element("div", undefined, "monitor-item-meta");
+          meta.append(element("span", "创建于 " + formatOptionalDate(item.createdAt)));
+          meta.append(document.createTextNode(" · "));
+          const countdown = element("span", "计算中…");
+          countdown.dataset.expiresAt = item.expiresAt || "";
+          meta.append(countdown);
+          card.append(meta);
+          const details = element("dl");
+          appendDetail(details, "有效期至", formatOptionalDate(item.expiresAt));
+          appendDetail(details, "诊断引用", item.codeRef);
+          appendDetail(details, "配置摘要", item.configSummary);
+          card.append(details);
+          const configDetails = element("details");
+          configDetails.append(element("summary", "查看完整只读配置"));
+          configDetails.append(jsonBlock(item.config));
+          card.append(configDetails);
+          pendingContainer.append(card);
+        }
+      }
+
+      const sessionsContainer = $("console-sessions");
+      sessionsContainer.replaceChildren();
+      if (!payload.sessions || !payload.sessions.length) {
+        sessionsContainer.append(element("span", "没有活动会话。", "monitor-empty"));
+      } else {
+        for (const item of payload.sessions) {
+          const tailscale = item.tailscale || {};
+          const clientState = item.clientState || {};
+          const config = item.config || {};
+          const title = tailscale.hostname || tailscale.name || item.provisioningHostname || item.sessionId;
+          const card = element("article", undefined, "monitor-item");
+          const header = element("div", undefined, "monitor-item-header");
+          header.append(element("strong", title, "monitor-item-title"));
+          header.append(statusPill(item.health));
+          card.append(header);
+          const meta = element("div", undefined, "monitor-item-meta");
+          meta.append(element("span", "会话 " + (item.sessionId || "—")));
+          meta.append(document.createTextNode(" · " + (item.healthReason || "")));
+          card.append(meta);
+          const details = element("dl");
+          appendDetail(details, "授权 PIN", item.authorizationCode || "不可用");
+          appendDetail(details, "授权码引用", item.authorizationCodeRef);
+          appendDetail(details, "PinNode 状态", item.status);
+          appendDetail(details, "PinNode 最近上报", formatOptionalDate(item.lastSeenAt));
+          appendDetail(details, "设备绑定", formatOptionalDate(item.connectedAt));
+          appendDetail(details, "客户端后端", clientState.backendState);
+          appendDetail(details, "Tailscale 路径", clientState.tailscalePath);
+          appendDetail(details, "网络接口", clientState.interfaceName);
+          appendDetail(details, "客户端健康", listText(clientState.health));
+          appendDetail(details, "Tailscale 状态", item.tailscaleStatus);
+          appendDetail(details, "Tailscale 在线", tailscale.online === undefined ? "—" : (tailscale.online ? "是" : "否"));
+          appendDetail(details, "Tailscale 地址", listText(tailscale.addresses));
+          appendDetail(details, "已启用路由", listText(item.routes));
+          appendDetail(details, "出口节点", config.advertiseExitNode ? "发布 Exit Node" : (config.useExitNode ? "使用 Exit Node" : "未启用"));
+          appendDetail(details, "配置 revision", item.configRevision + " / 已应用 " + item.appliedConfigRevision);
+          card.append(details);
+          const configDetails = element("details");
+          configDetails.append(element("summary", "查看完整只读配置与状态"));
+          configDetails.append(jsonBlock({
+            config: item.config,
+            clientState: item.clientState,
+            tailscale: tailscale,
+            routes: item.routes,
+            wifiRoutes: item.wifiRoutes,
+          }));
+          card.append(configDetails);
+          sessionsContainer.append(card);
+        }
+      }
+      updatePendingCountdowns();
+    }
+
+    function updatePendingCountdowns() {
+      for (const node of document.querySelectorAll("[data-expires-at]")) {
+        const expiresAt = Date.parse(node.dataset.expiresAt || "");
+        if (!Number.isFinite(expiresAt)) {
+          node.textContent = "有效期未知";
+          continue;
+        }
+        const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+        node.textContent = remaining ? "剩余 " + remaining + " 秒" : "已到期，等待刷新";
+      }
+    }
+
+    async function loadConsole() {
+      try {
+        const response = await fetch("/v1/admin/console", { headers: { "Accept": "application/json" } });
+        if (response.status === 401) {
+          await initialize();
+          return;
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error?.message || "读取 Console 状态失败");
+        renderConsole(payload);
+        $("console-status").dataset.state = "";
+        $("console-status").textContent = "服务端时间：" + formatOptionalDate(payload.serverTime) + " · 状态事件流已连接";
+      } catch (error) {
+        $("console-status").dataset.state = "error";
+        $("console-status").textContent = error.message || "读取 Console 状态失败";
+      }
+    }
+
+    function openConsoleStream(after) {
+      if (consoleStream) consoleStream.close();
+      const query = Number(after) > 0 ? "?after=" + encodeURIComponent(after) : "";
+      const source = new EventSource("/v1/admin/console/stream" + query);
+      consoleStream = source;
+      source.onopen = () => {
+        if (currentPage === "console") {
+          $("console-status").dataset.state = "";
+          $("console-status").textContent = "状态事件流已连接 · 自动刷新";
+        }
+      };
+      source.onerror = () => {
+        if (currentPage === "console") {
+          $("console-status").dataset.state = "error";
+          $("console-status").textContent = "状态事件流暂时断开，浏览器将自动重连…";
+        }
+      };
+      source.addEventListener("state", () => {
+        loadConsole();
+      });
+      source.addEventListener("reset", () => {
+        loadConsole();
+      });
+    }
+
+    function isLogAtBottom() {
+      const wrap = $("logs-table-wrap");
+      return wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 24;
+    }
+
+    function filteredLogs() {
+      const level = value("log-level-filter");
+      const source = value("log-source-filter").toLowerCase();
+      const component = value("log-component-filter").toLowerCase();
+      const identity = value("log-identity-filter").toLowerCase();
+      const textFilter = value("log-text-filter").toLowerCase();
+      return logEntries.filter((item) => {
+        const itemIdentity = [item.sessionId, item.nodeId].filter(Boolean).join(" ").toLowerCase();
+        return (!level || item.level === level) &&
+            (!source || String(item.source || "").toLowerCase().includes(source)) &&
+            (!component || String(item.component || "").toLowerCase().includes(component)) &&
+            (!identity || itemIdentity.includes(identity)) &&
+            (!textFilter || String(item.message || "").toLowerCase().includes(textFilter));
+      });
+    }
+
+    function renderLogs() {
+      const wrap = $("logs-table-wrap");
+      const stayAtBottom = isLogAtBottom();
+      const body = $("logs-body");
+      body.replaceChildren();
+      const visible = filteredLogs();
+      for (const item of visible) {
+        const row = document.createElement("tr");
+        row.append(element("td", formatOptionalDate(item.timestamp)));
+        const level = element("td", item.level || "INFO", "log-level-" + (item.level || "INFO"));
+        row.append(level);
+        row.append(element("td", item.source || "—"));
+        row.append(element("td", item.component || "—"));
+        row.append(element("td", [item.sessionId, item.nodeId].filter(Boolean).join(" · ") || "—"));
+        row.append(element("td", item.message || ""));
+        body.append(row);
+      }
+      $("logs-empty").hidden = visible.length !== 0;
+      if (stayAtBottom && $("logs-auto-scroll").checked) wrap.scrollTop = wrap.scrollHeight;
+      updateNewLogButton();
+    }
+
+    function updateNewLogButton() {
+      $("logs-new").hidden = pendingLogCount < 1;
+      $("logs-new-count").textContent = String(pendingLogCount);
+    }
+
+    function appendLog(item) {
+      const sequence = Number(item.sequence) || 0;
+      if (!sequence || logEntries.some((existing) => Number(existing.sequence) === sequence)) return;
+      const wasAtBottom = isLogAtBottom();
+      logEntries.push(item);
+      logEntries.sort((left, right) => Number(left.sequence) - Number(right.sequence));
+      if (logEntries.length > maxBrowserLogs) logEntries = logEntries.slice(-maxBrowserLogs);
+      if (logsPaused || !wasAtBottom) pendingLogCount = Math.min(maxBrowserLogs, pendingLogCount + 1);
+      if (!logsPaused) renderLogs();
+      else updateNewLogButton();
+    }
+
+    async function loadRecentLogs() {
+      try {
+        const response = await fetch("/v1/admin/logs/recent?limit=512", { headers: { "Accept": "application/json" } });
+        if (response.status === 401) {
+          await initialize();
+          return;
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error?.message || "读取最近日志失败");
+        logEntries = Array.isArray(payload.logs) ? payload.logs.slice(-maxBrowserLogs) : [];
+        logSequence = Number(payload.latestSequence) || 0;
+        if (!logsPaused) renderLogs();
+        $("logs-status").dataset.state = "";
+        $("logs-status").textContent = "已载入 " + logEntries.length + " 条最近日志 · 环形缓冲上限 2048 条";
+      } catch (error) {
+        $("logs-status").dataset.state = "error";
+        $("logs-status").textContent = error.message || "读取最近日志失败";
+      }
+    }
+
+    function openLogsStream(after) {
+      if (logsStream) logsStream.close();
+      const query = Number(after) > 0 ? "?after=" + encodeURIComponent(after) : "";
+      const source = new EventSource("/v1/admin/logs/stream" + query);
+      logsStream = source;
+      source.onopen = () => {
+        if (currentPage === "logs") {
+          $("logs-status").dataset.state = "";
+          $("logs-status").textContent = "日志事件流已连接 · 自动重连已启用";
+        }
+      };
+      source.onerror = () => {
+        if (currentPage === "logs") {
+          $("logs-status").dataset.state = "error";
+          $("logs-status").textContent = "日志事件流暂时断开，浏览器将自动重连…";
+        }
+      };
+      source.addEventListener("log", (event) => {
+        try {
+          const item = JSON.parse(event.data);
+          logSequence = Math.max(logSequence, Number(item.sequence) || 0);
+          appendLog(item);
+        } catch (_) {
+          $("logs-status").dataset.state = "error";
+          $("logs-status").textContent = "收到无法解析的日志事件";
+        }
+      });
+      source.addEventListener("reset", () => {
+        loadRecentLogs();
+      });
+    }
+
+    $("console-refresh").addEventListener("click", loadConsole);
+    $("logs-refresh").addEventListener("click", async () => {
+      await loadRecentLogs();
+      openLogsStream(logSequence);
+    });
+    ["log-level-filter", "log-source-filter", "log-component-filter", "log-identity-filter", "log-text-filter"]
+        .forEach((id) => $(id).addEventListener("input", renderLogs));
+    $("logs-auto-scroll").addEventListener("change", renderLogs);
+    $("logs-pause").addEventListener("click", () => {
+      logsPaused = !logsPaused;
+      $("logs-pause").textContent = logsPaused ? "继续接收" : "暂停";
+      if (!logsPaused) {
+        pendingLogCount = 0;
+        renderLogs();
+      }
+    });
+    $("logs-new").addEventListener("click", () => {
+      logsPaused = false;
+      $("logs-pause").textContent = "暂停";
+      pendingLogCount = 0;
+      $("logs-table-wrap").scrollTop = $("logs-table-wrap").scrollHeight;
+      renderLogs();
+    });
+    consoleCountdownTimer = window.setInterval(updatePendingCountdowns, 1000);
 
     function hasLeadingZeroBits(buffer, count) {
       const bytes = new Uint8Array(buffer);

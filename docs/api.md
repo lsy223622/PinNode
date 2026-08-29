@@ -8,7 +8,7 @@
 - v1 当前采用干净契约，不保留旧字段、旧路径或兼容别名。
 - 会话创建是可重试的幂等操作；PIN 只在会话及其重放记录成功落库时消费。
 - 所有活动会话都通过 revisioned `sync` 同步状态和配置。`exitPolicy.onAppClose=true` 时，同一个同步请求还会续期服务端清理租约。
-- 客户端日志上传和会话中配置修改不塞进 `sync` 请求体；它们使用独立资源，并通过能力标识协商。
+- 客户端日志上传不塞进 `sync` 请求体；它使用独立的批量资源，并通过能力标识协商。管理 Console 的状态和日志事件流只允许管理员会话访问。
 
 ## 2. 通用约定
 
@@ -45,6 +45,8 @@
 - `idempotent-session-start-v1`
 - `revisioned-session-config-v1`
 - `session-sync-v1`
+- `client-state-report-v1`
+- `client-logs-v1`
 - `structured-errors-v1`
 
 v1 冻结后，兼容变更只能增加可选响应字段、能力标识或新资源；不能改变已有字段含义、把可选字段改为必填、复用错误码表达另一种错误，或改变现有认证方式。
@@ -75,11 +77,16 @@ v1 冻结后，兼容变更只能增加可选响应字段、能力标识或新�
 | `GET` | `/v1/tailscale-credentials` | 管理页 | Admin session | 列出凭据元数据 |
 | `POST` | `/v1/tailscale-credentials` | 管理页 | Admin write | 验证并加密保存凭据 |
 | `POST` | `/v1/pairing-codes` | 管理页 | Admin write | 创建一次性六位 PIN |
+| `GET` | `/v1/admin/console` | 管理页 | Admin session | 查询待兑换 PIN、活动会话和控制面快照 |
+| `GET` | `/v1/admin/console/stream` | 管理页 | Admin session | 订阅 Console 状态事件 SSE |
+| `GET` | `/v1/admin/logs/recent` | 管理页 | Admin session | 查询进程内最近结构化日志 |
+| `GET` | `/v1/admin/logs/stream` | 管理页 | Admin session | 订阅结构化日志 SSE |
 | `POST` | `/v1/sessions` | Android | Public + Idempotency | 兑换 PIN 并创建会话 |
 | `GET` | `/v1/sessions` | 管理页 | Admin session | 查询会话历史 |
 | `GET` | `/v1/sessions/{sessionId}` | Android/工具 | Session bearer | 读取当前会话 |
 | `POST` | `/v1/sessions/{sessionId}/device` | Android | Session bearer | 绑定精确 Tailscale 节点并启用路由 |
 | `POST` | `/v1/sessions/{sessionId}/sync` | Android | Session bearer | 上报已应用 revision、续期并获取配置 |
+| `POST` | `/v1/sessions/{sessionId}/logs` | Android | Session bearer | 上传脱敏后的客户端结构化日志批次 |
 | `POST` | `/v1/sessions/{sessionId}/stop` | Android | Session bearer | 撤销路由并删除节点 |
 
 ## 5. 核心模型
@@ -155,6 +162,8 @@ pairing code 请求中的 `config` 是对安全默认值的部分覆盖；服务
     "idempotent-session-start-v1",
     "revisioned-session-config-v1",
     "session-sync-v1",
+    "client-state-report-v1",
+    "client-logs-v1",
     "structured-errors-v1"
   ],
   "limits": {"jsonBodyBytes": 16384}
@@ -241,7 +250,7 @@ OAuth 交换会显式请求 `auth_keys devices:core devices:routes` scope 和当
 ```json
 {
   "protocolVersion": 1,
-  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "structured-errors-v1"],
+  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "client-state-report-v1", "client-logs-v1", "structured-errors-v1"],
   "sessionId": "...",
   "sessionToken": "...",
   "authKey": "tskey-auth-...",
@@ -278,14 +287,34 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 
 ### 6.8 同步会话
 
-`POST /v1/sessions/{sessionId}/sync` 对所有 `active` 会话可用：
+`POST /v1/sessions/{sessionId}/sync` 对所有 `active` 会话可用。除了 revision 和能力列表，客户端可以在每次心跳中提交 `clientState`；当前 Android 客户端总是提交该快照：
 
 ```json
 {
   "protocolVersion": 1,
   "appliedConfigRevision": 1,
   "clientVersion": "0.1.0",
-  "clientCapabilities": ["session-sync-v1"]
+  "clientCapabilities": ["session-sync-v1", "client-state-report-v1", "client-logs-v1"],
+  "clientState": {
+    "backendState": "running",
+    "tailscaleRunning": true,
+    "vpnEnabled": true,
+    "networkMode": "cellular",
+    "tailscalePath": "cellular",
+    "wifiConnected": true,
+    "cellularConnected": true,
+    "internetAvailable": true,
+    "interfaceName": "wlan0",
+    "tailscaleIps": ["100.64.0.10"],
+    "allowedIps": ["100.64.0.10/32"],
+    "advertisedRoutes": ["192.168.1.1/32"],
+    "deviceName": "Android",
+    "deviceModel": "test",
+    "os": "android",
+    "osVersion": "16",
+    "health": [],
+    "lastError": ""
+  }
 }
 ```
 
@@ -294,7 +323,7 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 ```json
 {
   "protocolVersion": 1,
-  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "structured-errors-v1"],
+  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "client-state-report-v1", "client-logs-v1", "structured-errors-v1"],
   "status": "active",
   "serverTime": "2026-08-26T08:01:00Z",
   "nextSyncAfterSeconds": 60,
@@ -305,7 +334,38 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 
 当客户端 revision 落后时，`desiredConfig` 是包含 `revision`、完整 `config`、`gatewayRoute`、`routes`、`wifiRoutes`、`expiresAt` 的原子快照。客户端先完整应用快照，再在下一次 `sync` 上报新的 `appliedConfigRevision`。`onAppClose=true` 时 `syncDeadline` 为租约截止时间；其他会话为 `null`，但仍必须同步以接收配置。
 
-### 6.9 停止会话
+### 6.9 客户端日志上传
+
+`POST /v1/sessions/{sessionId}/logs` 使用 session bearer，只接受活动会话和最多 32 条日志。单条日志字段为 `timestamp`（必填 RFC 3339）、`level`（`DEBUG`、`INFO`、`WARN`、`ERROR`）、`component`（最多 128 字符）和 `message`（最多 2048 字符）。服务端会再次脱敏后再放入日志环，不信任客户端已经做过的脱敏。
+
+Android 客户端在本地保留最多 200 条或约 256 KiB 的待上传日志；正常约每 5 秒发送最多 8 条，ERROR 会唤醒立即发送。上传失败不会停止 VPN，会在下一个窗口重试；进程退出时只做一次有界的尽力 flush。服务端不把日志写入 SQLite，也不依赖 Redis、Kafka 等外部队列。
+
+### 6.10 管理 Console 和实时日志
+
+`GET /v1/admin/console` 返回：
+
+- `pending`：仍未兑换且未过期的 PIN。`code` 只在服务端能用实例密钥解密时返回；`configSummary` 和 `config` 是只读展示数据，`codeRef` 是不可逆诊断引用。
+- `sessions`：非 `stopped` 的会话，包含状态、配置摘要、完整只读配置、`clientState`、PinNode `lastSeenAt`、绑定时间和当前 Tailscale 节点快照。`health` 会分别区分 PinNode 上报超时、客户端后端不在 Running、Tailscale 控制面暂时不可用以及 Tailscale 节点离线。
+- `counts`、`serverTime` 和当前全局 `eventSequence`。
+
+`GET /v1/admin/console/stream` 和 `GET /v1/admin/logs/stream` 是同源管理员 SSE。事件带全局递增 `id`，浏览器会用 `Last-Event-ID` 续传，也接受 `after` 查询参数；事件只保留在服务端最多 2048 项的进程内环形缓冲中。断点早于当前缓冲窗口时发送 `reset`，客户端应重新读取对应的 Console 或 recent logs 接口。日志流事件格式为：
+
+```json
+{
+  "sequence": 42,
+  "timestamp": "2026-08-29T08:00:00Z",
+  "level": "WARN",
+  "source": "client",
+  "component": "RescueSessionManager",
+  "message": "PinNode 会话同步失败: IOException",
+  "sessionId": "…",
+  "nodeId": "…"
+}
+```
+
+管理员页面在暂停时停止渲染但继续接收有界事件，显示待处理数量；恢复或点击新日志提示后再渲染。自动滚动只在用户已经位于底部时生效。
+
+### 6.11 停止会话
 
 `POST /v1/sessions/{sessionId}/stop` 无请求体。服务端先向 Tailscale 发送 `{"routes":[]}`，再删除精确节点并撤销尚存的 auth key。成功为 `{"status":"stopped"}`；已经停止时为 `{"status":"already-stopped"}`。清理失败进入 `cleanup_failed`，reaper 会继续重试。
 
@@ -317,8 +377,9 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 | 管理认证 | `pow_unavailable`, `pow_invalid`, `auth_state_failed`, `admin_setup_forbidden`, `admin_username_invalid`, `admin_password_invalid`, `admin_already_initialized`, `admin_setup_failed`, `admin_session_create_failed`, `admin_credentials_invalid`, `admin_login_limited`, `admin_login_failed`, `admin_auth_required`, `admin_auth_failed`, `csrf_invalid`, `origin_invalid`, `secure_transport_required` |
 | Tailscale 凭据 | `credential_required`, `credential_unavailable`, `credential_name_invalid`, `credential_type_unsupported`, `credential_list_failed`, `credential_save_failed`, `api_token_invalid`, `oauth_client_invalid`, `oauth_scope_invalid`, `credential_name_conflict`, `tailscale_permission_denied`, `tailscale_rate_limited`, `tailscale_unavailable` |
 | pairing code | `pairing_code_format_invalid`, `pairing_code_invalid`, `pairing_code_read_failed`, `pairing_code_create_failed` |
+| 管理监控 | `console_read_failed`, `stream_unsupported` |
 | 会话创建 | `idempotency_key_invalid`, `idempotency_key_conflict`, `session_config_invalid`, `session_config_expired`, `wifi_gateway_required`, `wifi_subnet_required`, `gateway_route_invalid`, `wifi_subnet_route_invalid`, `session_create_failed`, `session_replay_failed` |
-| 会话运行 | `session_list_failed`, `session_path_not_found`, `session_operation_not_found`, `session_read_failed`, `session_not_found`, `session_auth_required`, `session_auth_invalid`, `session_state_conflict`, `session_expired`, `protocol_version_unsupported`, `config_revision_invalid`, `client_metadata_invalid`, `node_id_invalid`, `device_not_ready`, `device_identity_mismatch`, `device_not_managed`, `device_already_bound`, `device_attach_failed`, `device_binding_refresh_failed`, `session_sync_failed`, `session_cleanup_start_failed`, `session_cleanup_failed` |
+| 会话运行 | `session_list_failed`, `session_path_not_found`, `session_operation_not_found`, `session_read_failed`, `session_not_found`, `session_auth_required`, `session_auth_invalid`, `session_state_conflict`, `session_expired`, `protocol_version_unsupported`, `config_revision_invalid`, `client_metadata_invalid`, `client_state_invalid`, `client_logs_invalid`, `node_id_invalid`, `device_not_ready`, `device_identity_mismatch`, `device_not_managed`, `device_already_bound`, `device_attach_failed`, `device_binding_refresh_failed`, `session_sync_failed`, `session_cleanup_start_failed`, `session_cleanup_failed` |
 
 每个操作的成功状态和请求/响应结构以 OpenAPI 文件为准；错误状态使用本节的稳定错误码和统一错误信封。
 
@@ -337,9 +398,7 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 
 ## 9. 已预留的 v1 扩展
 
-以下名称和资源边界被保留，但当前版本尚未提供对应端点，客户端不得假定它们可用：
-
-- `client-log-upload-v1`：能力启用后使用独立的批量资源 `POST /v1/sessions/{sessionId}/log-batches`。日志具有单独的体积限制、压缩、去重、保留期和隐私策略，不占用 `sync` 的 16 KiB 控制面预算。
+以下名称和资源边界仍被保留，但当前版本尚未提供对应端点，客户端不得假定它们可用：
 - `session-config-update-v1`：能力启用后由管理端使用 `PATCH /v1/sessions/{sessionId}/config` 提交基于当前 revision 的完整或受控 patch；并发写入使用 revision 前置条件。Android 仍只通过现有 `sync.desiredConfig` 接收原子快照。
 
 新增扩展必须先出现在 `/v1/meta.features`，再允许客户端调用。未知能力必须被忽略；缺少客户端必需能力时，客户端应在创建会话前停止并给出明确的版本错误。
