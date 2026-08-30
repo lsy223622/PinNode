@@ -77,10 +77,18 @@
 locked 构建只在 UI 隐藏 URL 和禁止编辑，不把 URL 当作秘密。攻击者仍可从 APK 中
 提取它；服务端必须继续验证管理员会话/PIN、使用 TLS 并执行最小权限策略。
 
-### 日志
+### 管理监控与日志
 
-生产环境需检查反向代理日志、Android logcat、崩溃转储和监控系统，避免记录
-管理员 Cookie/CSRF token、session token、PIN、auth key、OAuth secret 或 API access token。
+- Console 只读取非 `stopped` 的活动会话，健康统计把 `Unknown`、`Ending` 和 `Cleaning`
+  也纳入需关注计数；Tailscale 节点查询带短超时和五秒进程内缓存，控制面故障时不把
+  失败误报为已连接。
+- 状态和日志分别保留在最多 2048 项的进程内环形缓冲；SSE 连接在事件、心跳和恢复发送前
+  重新验证管理员 session。登出或 session 删除后，服务端发送 `auth-expired` 并关闭流，
+  浏览器回到登录态。
+- 生产环境需检查反向代理日志、Android logcat、崩溃转储和监控系统，避免记录管理员
+  Cookie/CSRF token、session token、PIN、auth key、OAuth secret 或 API access token。
+  客户端和服务端均对 Authorization、Cookie、access token、OAuth/API key、配对码和
+  secret 等常见字段做二次脱敏；脱敏后的日志仍只存进程内内存。
 
 ## 残余风险
 
@@ -92,6 +100,8 @@ locked 构建只在 UI 隐藏 URL 和禁止编辑，不把 URL 当作秘密。�
   被还原；两者必须分开备份和保护。实例根密钥丢失也会使既有凭据及其会话清理不可用。
 - 控制面/API 故障可能留下离线持久节点或已批准路由，必须持久化清理队列并定期审计
   专用 tag。
+- 管理日志缓冲在服务重启后丢失，五秒设备快照也可能短时间展示旧状态；它们不能替代
+  持久审计和实时控制面核对。
 - Wi-Fi 丢失能阻止新转发 socket；已经建立的流没有统一注册表保证瞬时终止。
 - 本机使用 Exit Node、高级 SSH/Web/App Connector 等偏好只完成字段下发或构建验证，
   未全部在本轮真实 tailnet 逐项验证。

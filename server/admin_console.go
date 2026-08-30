@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,19 @@ import (
 )
 
 const (
-	maxClientLogEntries = 32
-	maxClientLogMessage = 2048
-	maxClientStateItems = 32
+	maxClientLogEntries   = 32
+	maxClientLogMessage   = 2048
+	maxClientStateItems   = 32
+	maxClientLogBodyBytes = 128 << 10
+	consoleDeviceCacheTTL = 5 * time.Second
+	consoleDeviceTimeout  = 5 * time.Second
 )
+
+type cachedConsoleDevice struct {
+	device    Device
+	err       error
+	fetchedAt time.Time
+}
 
 func (s *Service) handleAdminConsole(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -26,13 +36,13 @@ func (s *Service) handleAdminConsole(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	codes, err := s.store.ListPendingPairingCodes(now)
 	if err != nil {
-		s.logger.Printf("读取待兑换授权码失败: %v", err)
+		s.logger.Errorf("admin-console", "读取待兑换授权码失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "console_read_failed", "读取控制台状态失败")
 		return
 	}
-	sessions, err := s.store.ListSessions(1000)
+	sessions, err := s.store.ListActiveSessions()
 	if err != nil {
-		s.logger.Printf("读取控制台会话失败: %v", err)
+		s.logger.Errorf("admin-console", "读取控制台会话失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "console_read_failed", "读取控制台状态失败")
 		return
 	}
@@ -49,7 +59,16 @@ func (s *Service) handleAdminConsole(w http.ResponseWriter, r *http.Request) {
 		active = append(active, s.consoleSession(r, session, now))
 	}
 
-	counts := map[string]int{"pending": len(pending), "sessions": len(active)}
+	counts := map[string]int{
+		"pending":  len(pending),
+		"sessions": len(active),
+		"healthy":  0,
+		"warning":  0,
+		"offline":  0,
+		"unknown":  0,
+		"ending":   0,
+		"cleaning": 0,
+	}
 	for _, session := range active {
 		switch session["health"] {
 		case "Healthy":
@@ -58,8 +77,15 @@ func (s *Service) handleAdminConsole(w http.ResponseWriter, r *http.Request) {
 			counts["warning"]++
 		case "Offline":
 			counts["offline"]++
+		case "Unknown":
+			counts["unknown"]++
+		case "Ending":
+			counts["ending"]++
+		case "Cleaning":
+			counts["cleaning"]++
 		}
 	}
+	counts["attention"] = counts["sessions"] - counts["healthy"]
 	writeJSON(w, http.StatusOK, map[string]any{
 		"serverTime":    now.UTC().Format(time.RFC3339Nano),
 		"eventSequence": s.events.latest(),
@@ -134,15 +160,38 @@ func (s *Service) consoleDevice(r *http.Request, session Session) (*Device, erro
 	if session.DeviceID == "" {
 		return nil, nil
 	}
-	accessToken, err := s.credentialToken(r.Context(), session.CredentialID)
+	cacheKey := session.CredentialID + "\x00" + session.DeviceID
+	now := time.Now()
+	s.consoleDeviceMu.Lock()
+	if cached, ok := s.consoleDeviceCache[cacheKey]; ok && now.Before(cached.fetchedAt.Add(consoleDeviceCacheTTL)) {
+		device, err := cached.device, cached.err
+		s.consoleDeviceMu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		return &device, nil
+	}
+	s.consoleDeviceMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(r.Context(), consoleDeviceTimeout)
+	defer cancel()
+	accessToken, err := s.credentialToken(ctx, session.CredentialID)
 	if err != nil {
+		s.cacheConsoleDevice(cacheKey, Device{}, err, now)
 		return nil, err
 	}
-	device, err := s.tailscale.GetDevice(r.Context(), accessToken, session.DeviceID)
+	device, err := s.tailscale.GetDevice(ctx, accessToken, session.DeviceID)
+	s.cacheConsoleDevice(cacheKey, device, err, now)
 	if err != nil {
 		return nil, err
 	}
 	return &device, nil
+}
+
+func (s *Service) cacheConsoleDevice(cacheKey string, device Device, err error, fetchedAt time.Time) {
+	s.consoleDeviceMu.Lock()
+	s.consoleDeviceCache[cacheKey] = cachedConsoleDevice{device: device, err: err, fetchedAt: fetchedAt}
+	s.consoleDeviceMu.Unlock()
 }
 
 func (s *Service) sessionPairingCode(session Session) string {
@@ -330,6 +379,10 @@ func (s *Service) handleAdminEventStream(w http.ResponseWriter, r *http.Request,
 	if !s.requireAdminAPI(w, r, false) {
 		return
 	}
+	adminTokenHash, ok := adminSessionHash(r)
+	if !ok {
+		return
+	}
 	if _, ok := w.(http.Flusher); !ok {
 		writeError(w, http.StatusInternalServerError, "stream_unsupported", "当前响应不支持实时事件流")
 		return
@@ -354,6 +407,10 @@ func (s *Service) handleAdminEventStream(w http.ResponseWriter, r *http.Request,
 			flusher.Flush()
 		}
 	}
+	if !s.adminSessionValid(adminTokenHash) {
+		writeSSEAuthExpired(w)
+		return
+	}
 	for _, event := range replay {
 		if err := writeSSEEvent(w, event); err != nil {
 			return
@@ -367,10 +424,21 @@ func (s *Service) handleAdminEventStream(w http.ResponseWriter, r *http.Request,
 			if !ok {
 				return
 			}
-			if event.Kind == kind && writeSSEEvent(w, event) != nil {
+			if event.Kind != kind {
+				continue
+			}
+			if !s.adminSessionValid(adminTokenHash) {
+				writeSSEAuthExpired(w)
+				return
+			}
+			if writeSSEEvent(w, event) != nil {
 				return
 			}
 		case <-keepAlive.C:
+			if !s.adminSessionValid(adminTokenHash) {
+				writeSSEAuthExpired(w)
+				return
+			}
 			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
 				return
 			}
@@ -380,6 +448,20 @@ func (s *Service) handleAdminEventStream(w http.ResponseWriter, r *http.Request,
 		case <-r.Context().Done():
 			return
 		}
+	}
+}
+
+func (s *Service) adminSessionValid(tokenHash string) bool {
+	_, ok, err := s.store.GetAdminSession(tokenHash, time.Now())
+	return err == nil && ok
+}
+
+func writeSSEAuthExpired(w http.ResponseWriter) {
+	if _, err := fmt.Fprint(w, "event: auth-expired\ndata: {\"reason\":\"admin_session_invalid\"}\n\n"); err != nil {
+		return
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
 	}
 }
 
@@ -419,7 +501,7 @@ func (s *Service) handleSessionLogs(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	var request sessionLogsRequest
-	if !decodeJSON(w, r, &request) {
+	if !decodeJSONWithLimit(w, r, &request, maxClientLogBodyBytes) {
 		return
 	}
 	if len(request.Logs) > maxClientLogEntries {

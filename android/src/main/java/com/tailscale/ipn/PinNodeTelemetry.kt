@@ -37,7 +37,11 @@ internal data class ClientLogEntry(
 
 @Serializable internal data class ClientLogsRequest(val logs: List<ClientLogEntry>)
 
-internal data class BufferedClientLog(val id: Long, val entry: ClientLogEntry)
+internal data class BufferedClientLog(
+    val id: Long,
+    val sessionId: String,
+    val entry: ClientLogEntry,
+)
 
 /** A small in-memory queue so a disconnected client cannot grow its log storage without bound. */
 internal class ClientLogBuffer(
@@ -49,25 +53,58 @@ internal class ClientLogBuffer(
   private var nextID = 0L
   private var characters = 0
 
-  fun append(entry: ClientLogEntry): Long {
+  fun append(sessionId: String, entry: ClientLogEntry): Long {
     val size = entrySize(entry)
     synchronized(lock) {
-      if (maxEntries <= 0 || maxCharacters <= 0 || size > maxCharacters) return -1
+      if (sessionId.isBlank() || maxEntries <= 0 || maxCharacters <= 0 || size > maxCharacters)
+          return -1
       while (entries.isNotEmpty() &&
           (entries.size >= maxEntries || characters + size > maxCharacters)) {
         characters -= entrySize(entries.removeFirst().entry)
       }
       nextID++
-      entries.addLast(BufferedClientLog(nextID, entry))
+      entries.addLast(BufferedClientLog(nextID, sessionId, entry))
       characters += size
       return nextID
     }
   }
 
-  fun snapshot(limit: Int): List<BufferedClientLog> {
+  fun snapshot(sessionId: String, limit: Int): List<BufferedClientLog> {
     if (limit <= 0) return emptyList()
     synchronized(lock) {
-      return entries.toList().takeLast(limit.coerceAtMost(entries.size))
+      return entries.filter { it.sessionId == sessionId }.takeLast(limit)
+    }
+  }
+
+  fun discardSession(sessionId: String) {
+    if (sessionId.isBlank()) return
+    synchronized(lock) {
+      val retained = ArrayDeque<BufferedClientLog>(entries.size)
+      while (entries.isNotEmpty()) {
+        val item = entries.removeFirst()
+        if (item.sessionId == sessionId) {
+          characters -= entrySize(item.entry)
+        } else {
+          retained.addLast(item)
+        }
+      }
+      entries.addAll(retained)
+    }
+  }
+
+  fun discardOtherSessions(sessionId: String) {
+    if (sessionId.isBlank()) return
+    synchronized(lock) {
+      val retained = ArrayDeque<BufferedClientLog>(entries.size)
+      while (entries.isNotEmpty()) {
+        val item = entries.removeFirst()
+        if (item.sessionId == sessionId) {
+          retained.addLast(item)
+        } else {
+          characters -= entrySize(item.entry)
+        }
+      }
+      entries.addAll(retained)
     }
   }
 

@@ -182,6 +182,8 @@ func (s *Store) migrate() error {
 			client_state_json TEXT NOT NULL DEFAULT '{}',
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE INDEX IF NOT EXISTS sessions_active_created_idx
+			ON sessions(created_at DESC) WHERE status <> 'stopped'`,
 		`CREATE TABLE IF NOT EXISTS session_start_replays (
 			idempotency_key_hash TEXT PRIMARY KEY,
 			request_hash TEXT NOT NULL,
@@ -1030,6 +1032,23 @@ func (s *Store) ListSessions(limit int) ([]Session, error) {
 		limit = 1000
 	}
 	rows, err := s.db.Query(sessionSelect+` ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []Session
+	for rows.Next() {
+		session, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
+func (s *Store) ListActiveSessions() ([]Session, error) {
+	rows, err := s.db.Query(sessionSelect+` WHERE status <> ? ORDER BY created_at DESC`, SessionStopped)
 	if err != nil {
 		return nil, err
 	}

@@ -166,7 +166,12 @@ pairing code 请求中的 `config` 是对安全默认值的部分覆盖；服务
     "client-logs-v1",
     "structured-errors-v1"
   ],
-  "limits": {"jsonBodyBytes": 16384}
+  "limits": {
+    "jsonBodyBytes": 16384,
+    "clientLogsBodyBytes": 131072,
+    "clientLogEntries": 32,
+    "clientLogMessageBytes": 2048
+  }
 }
 ```
 
@@ -336,19 +341,19 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 
 ### 6.9 客户端日志上传
 
-`POST /v1/sessions/{sessionId}/logs` 使用 session bearer，只接受活动会话和最多 32 条日志。单条日志字段为 `timestamp`（必填 RFC 3339）、`level`（`DEBUG`、`INFO`、`WARN`、`ERROR`）、`component`（最多 128 字符）和 `message`（最多 2048 字符）。服务端会再次脱敏后再放入日志环，不信任客户端已经做过的脱敏。
+`POST /v1/sessions/{sessionId}/logs` 使用 session bearer，只接受活动会话和最多 32 条日志。日志上传接口的请求体上限为 128 KiB；通用 JSON 接口上限仍为 16 KiB。单条日志字段为 `timestamp`（必填 RFC 3339）、`level`（`DEBUG`、`INFO`、`WARN`、`ERROR`）、`component`（最多 128 字节）和 `message`（最多 2048 字节）。服务端会再次脱敏后再放入日志环，不信任客户端已经做过的脱敏。
 
-Android 客户端在本地保留最多 200 条或约 256 KiB 的待上传日志；正常约每 5 秒发送最多 8 条，ERROR 会唤醒立即发送。上传失败不会停止 VPN，会在下一个窗口重试；进程退出时只做一次有界的尽力 flush。服务端不把日志写入 SQLite，也不依赖 Redis、Kafka 等外部队列。
+Android 客户端在本地保留最多 200 条或约 256 KiB 的待上传日志；正常约每 5 秒发送最多 8 条，ERROR 会唤醒立即发送。每条待上传日志保留所属 session，不能改绑到后续 session；session 结束时未成功上传的条目会被丢弃。上传失败不会停止 VPN，会在下一个窗口重试；进程退出时只做一次有界的尽力 flush。服务端不把日志写入 SQLite，也不依赖 Redis、Kafka 等外部队列。
 
 ### 6.10 管理 Console 和实时日志
 
 `GET /v1/admin/console` 返回：
 
 - `pending`：仍未兑换且未过期的 PIN。`code` 只在服务端能用实例密钥解密时返回；`configSummary` 和 `config` 是只读展示数据，`codeRef` 是不可逆诊断引用。
-- `sessions`：非 `stopped` 的会话，包含状态、配置摘要、完整只读配置、`clientState`、PinNode `lastSeenAt`、绑定时间和当前 Tailscale 节点快照。`health` 会分别区分 PinNode 上报超时、客户端后端不在 Running、Tailscale 控制面暂时不可用以及 Tailscale 节点离线。
-- `counts`、`serverTime` 和当前全局 `eventSequence`。
+- `sessions`：非 `stopped` 的会话，包含状态、配置摘要、完整只读配置、`clientState`、PinNode `lastSeenAt`、绑定时间和当前 Tailscale 节点快照。`health` 会区分 `Healthy`、`Warning`、`Offline`、`Unknown`、`Ending` 和 `Cleaning`，其中客户端失联与 Tailscale 节点离线不是同一含义。
+- `counts`、`serverTime` 和当前全局 `eventSequence`。`counts` 包含 `pending`、`sessions`、`healthy`、`warning`、`offline`、`unknown`、`ending`、`cleaning` 和 `attention`；`attention` 等于活动会话中所有非 `Healthy` 状态。
 
-`GET /v1/admin/console/stream` 和 `GET /v1/admin/logs/stream` 是同源管理员 SSE。事件带全局递增 `id`，浏览器会用 `Last-Event-ID` 续传，也接受 `after` 查询参数；事件只保留在服务端最多 2048 项的进程内环形缓冲中。断点早于当前缓冲窗口时发送 `reset`，客户端应重新读取对应的 Console 或 recent logs 接口。日志流事件格式为：
+`GET /v1/admin/console/stream` 和 `GET /v1/admin/logs/stream` 是同源管理员 SSE。事件带全局递增 `id`，浏览器会用 `Last-Event-ID` 续传，也接受 `after` 查询参数。状态事件和日志事件分别保留在服务端各自最多 2048 项的进程内环形缓冲中，不会互相挤出；日志缓冲仅存在于当前进程。断点早于对应缓冲窗口时发送 `reset`，客户端应重新读取对应的 Console 或 recent logs 接口。管理员 session 在连接建立后失效时，服务端发送 `auth-expired` 并关闭连接。日志流事件格式为：
 
 ```json
 {

@@ -62,7 +62,7 @@ func main() {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	service.logger.Printf("PinNode server listening on %s", config.ListenAddr)
+	service.logger.Infof("server", "PinNode server listening on %s", config.ListenAddr)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

@@ -377,7 +377,8 @@ class RescueSessionManager(private val app: App) {
   private val clientStateWake = Channel<Unit>(Channel.CONFLATED)
   private val clientLogFlushMutex = Mutex()
   private val clientLogBuffer = ClientLogBuffer()
-  @Volatile private var lastClientError = ""
+  @Volatile private var lastSyncError = ""
+  @Volatile private var lastLogUploadError = ""
   private val _sessionState = MutableStateFlow(RescueSessionState())
   val sessionState: StateFlow<RescueSessionState> = _sessionState.asStateFlow()
   private val _vpnPermissionRequests = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
@@ -740,8 +741,9 @@ class RescueSessionManager(private val app: App) {
   }
 
   private fun onPinNodeLog(entry: TSLog.PinNodeLogEntry) {
-    if (telemetrySessionID == null) return
+    val sessionID = telemetrySessionID ?: return
     clientLogBuffer.append(
+        sessionID,
         ClientLogEntry(
             timestamp = entry.timestamp,
             level = entry.level,
@@ -753,6 +755,9 @@ class RescueSessionManager(private val app: App) {
 
   private fun startClientTelemetry(session: ActiveSession) {
     stopClientTelemetry()
+    clientLogBuffer.discardOtherSessions(session.id)
+    lastSyncError = ""
+    lastLogUploadError = ""
     TSLog.pinNodeLogSink = { entry -> onPinNodeLog(entry) }
     telemetrySessionID = session.id
     clientLogUploadJob =
@@ -776,13 +781,14 @@ class RescueSessionManager(private val app: App) {
     clientLogUploadJob?.cancelAndJoin()
     clientLogUploadJob = null
     runCatching { flushClientLogs(session) }
+    clientLogBuffer.discardSession(session.id)
     telemetrySessionID = null
     TSLog.pinNodeLogSink = null
   }
 
   private suspend fun flushClientLogs(session: ActiveSession) {
     clientLogFlushMutex.withLock {
-      val batch = clientLogBuffer.snapshot(CLIENT_LOG_BATCH_SIZE)
+      val batch = clientLogBuffer.snapshot(session.id, CLIENT_LOG_BATCH_SIZE)
       if (batch.isEmpty()) return
       try {
         postJson<Unit, ClientLogsRequest>(
@@ -792,13 +798,19 @@ class RescueSessionManager(private val app: App) {
             session.serverUrl.ifBlank { configuredServerUrl() },
         )
         clientLogBuffer.acknowledge(batch.map { it.id })
-        lastClientError = ""
+        lastLogUploadError = ""
       } catch (error: Throwable) {
         if (error is kotlinx.coroutines.CancellationException) throw error
-        lastClientError = error::class.simpleName.orEmpty().take(256)
+        lastLogUploadError = error::class.simpleName.orEmpty().take(256)
       }
     }
   }
+
+  private fun latestClientError(): String =
+      listOf(lastSyncError, lastLogUploadError)
+          .filter(String::isNotBlank)
+          .joinToString("; ")
+          .take(256)
 
   private fun buildClientStateReport(): ClientStateReport {
     val backendState = Notifier.state.value
@@ -825,7 +837,7 @@ class RescueSessionManager(private val app: App) {
         os = node?.Hostinfo?.OS.orEmpty(),
         osVersion = node?.Hostinfo?.OSVersion.orEmpty(),
         health = health,
-        lastError = lastClientError,
+        lastError = latestClientError(),
     )
   }
 
@@ -954,13 +966,13 @@ class RescueSessionManager(private val app: App) {
                 }
               }
               intervalSeconds = response.nextSyncAfterSeconds.coerceIn(15, 300)
-              lastClientError = ""
+              lastSyncError = ""
             } catch (error: Throwable) {
               if (error is PinNodeApiException && error.status in setOf(404, 409, 410)) {
                 app.applicationScope.launch { stop() }
                 return@launch
               }
-              lastClientError = error::class.simpleName.orEmpty().take(256)
+              lastSyncError = error::class.simpleName.orEmpty().take(256)
               TSLog.e(TAG, "PinNode 会话同步失败: ${error::class.simpleName}")
             }
           }

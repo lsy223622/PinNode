@@ -658,6 +658,12 @@
     let logEntries = [];
     let logsPaused = false;
     let pendingLogCount = 0;
+    let pendingExpiryRefreshInFlight = false;
+    let pendingExpiryRefreshAfter = 0;
+    let authRecoveryInFlight = false;
+    const responsiveSidebar = window.matchMedia("(max-width: 760px)");
+    let lastNarrowScreen = responsiveSidebar.matches;
+    let lastHandledHash = "";
     const maxBrowserLogs = 2048;
 
     function setSidebarCollapsed(collapsed) {
@@ -729,10 +735,29 @@
     }
 
     window.addEventListener("scroll", scheduleNavigationUpdate, { passive: true });
-    window.addEventListener("resize", scheduleNavigationUpdate);
+    window.addEventListener("resize", () => {
+      if (responsiveSidebar.matches !== lastNarrowScreen) {
+        lastNarrowScreen = responsiveSidebar.matches;
+        setSidebarCollapsed(lastNarrowScreen);
+      }
+      scheduleNavigationUpdate();
+    });
+
+    function closeStreamsForPage(page) {
+      if (page !== "console" && consoleStream) {
+        consoleStream.close();
+        consoleStream = null;
+      }
+      if (page !== "logs" && logsStream) {
+        logsStream.close();
+        logsStream = null;
+      }
+    }
 
     function showPage(page, hash = "") {
       if (!["config", "console", "logs"].includes(page)) page = "config";
+      lastHandledHash = hash || location.hash || "#top";
+      closeStreamsForPage(page);
       currentPage = page;
       updateNavigationGroups(page);
       for (const view of pageViews) view.hidden = view.dataset.pageView !== page;
@@ -762,11 +787,22 @@
       link.addEventListener("click", (event) => {
         event.preventDefault();
         const hash = link.hash || "#top";
-        history.replaceState(null, "", hash);
+        if (location.hash !== hash) history.pushState(null, "", hash);
         showPage(link.dataset.page || "config", hash);
         collapseSidebarOnSmallScreen();
       });
     });
+
+    function syncPageFromLocation() {
+      const hash = location.hash || "#top";
+      if (hash === lastHandledHash) return;
+      const page = hash === "#console" ? "console" : (hash === "#logs" ? "logs" : "config");
+      showPage(page, hash);
+      collapseSidebarOnSmallScreen();
+    }
+
+    window.addEventListener("hashchange", syncPageFromLocation);
+    window.addEventListener("popstate", syncPageFromLocation);
 
     function authStatus(state, text) {
       $("auth-status").dataset.state = state;
@@ -872,7 +908,12 @@
       $("console-pending-count").textContent = String(Number(counts.pending) || 0);
       $("console-session-count").textContent = String(Number(counts.sessions) || 0);
       $("console-healthy-count").textContent = String(Number(counts.healthy) || 0);
-      $("console-warning-count").textContent = String((Number(counts.warning) || 0) + (Number(counts.offline) || 0));
+      const attention = Number.isFinite(Number(counts.attention))
+          ? Number(counts.attention)
+          : (Number(counts.warning) || 0) + (Number(counts.offline) || 0) +
+            (Number(counts.unknown) || 0) + (Number(counts.ending) || 0) +
+            (Number(counts.cleaning) || 0);
+      $("console-warning-count").textContent = String(attention);
 
       const pendingContainer = $("console-pending");
       pendingContainer.replaceChildren();
@@ -958,6 +999,7 @@
     }
 
     function updatePendingCountdowns() {
+      let expired = false;
       for (const node of document.querySelectorAll("[data-expires-at]")) {
         const expiresAt = Date.parse(node.dataset.expiresAt || "");
         if (!Number.isFinite(expiresAt)) {
@@ -965,7 +1007,20 @@
           continue;
         }
         const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
-        node.textContent = remaining ? "剩余 " + remaining + " 秒" : "已到期，等待刷新";
+        if (remaining) {
+          node.textContent = "剩余 " + remaining + " 秒";
+        } else {
+          expired = true;
+          node.textContent = "已到期，正在刷新…";
+        }
+      }
+      if (expired && currentPage === "console" && !pendingExpiryRefreshInFlight &&
+          Date.now() >= pendingExpiryRefreshAfter) {
+        pendingExpiryRefreshInFlight = true;
+        pendingExpiryRefreshAfter = Date.now() + 5000;
+        loadConsole().finally(() => {
+          pendingExpiryRefreshInFlight = false;
+        });
       }
     }
 
@@ -1003,12 +1058,22 @@
           $("console-status").dataset.state = "error";
           $("console-status").textContent = "状态事件流暂时断开，浏览器将自动重连…";
         }
+        recoverAdminSessionFromStream();
       };
       source.addEventListener("state", () => {
         loadConsole();
       });
       source.addEventListener("reset", () => {
-        loadConsole();
+        loadConsole().then(() => {
+          if (currentPage === "console" && consoleStream === source && !$('app-view').hidden) {
+            openConsoleStream(consoleSequence);
+          }
+        });
+      });
+      source.addEventListener("auth-expired", () => {
+        source.close();
+        if (consoleStream === source) consoleStream = null;
+        initialize();
       });
     }
 
@@ -1083,9 +1148,10 @@
         if (!response.ok) throw new Error(payload.error?.message || "读取最近日志失败");
         logEntries = Array.isArray(payload.logs) ? payload.logs.slice(-maxBrowserLogs) : [];
         logSequence = Number(payload.latestSequence) || 0;
+        pendingLogCount = 0;
         if (!logsPaused) renderLogs();
         $("logs-status").dataset.state = "";
-        $("logs-status").textContent = "已载入 " + logEntries.length + " 条最近日志 · 环形缓冲上限 2048 条";
+        $("logs-status").textContent = "已载入 " + logEntries.length + " 条最近日志 · 日志缓冲上限 2048 条";
       } catch (error) {
         $("logs-status").dataset.state = "error";
         $("logs-status").textContent = error.message || "读取最近日志失败";
@@ -1108,20 +1174,47 @@
           $("logs-status").dataset.state = "error";
           $("logs-status").textContent = "日志事件流暂时断开，浏览器将自动重连…";
         }
+        recoverAdminSessionFromStream();
       };
       source.addEventListener("log", (event) => {
         try {
           const item = JSON.parse(event.data);
-          logSequence = Math.max(logSequence, Number(item.sequence) || 0);
+          const sequence = Number(item.sequence) || 0;
+          if (!sequence || sequence <= logSequence) return;
           appendLog(item);
+          logSequence = sequence;
         } catch (_) {
           $("logs-status").dataset.state = "error";
           $("logs-status").textContent = "收到无法解析的日志事件";
         }
       });
       source.addEventListener("reset", () => {
-        loadRecentLogs();
+        loadRecentLogs().then(() => {
+          if (currentPage === "logs" && logsStream === source && !$('app-view').hidden) {
+            openLogsStream(logSequence);
+          }
+        });
       });
+      source.addEventListener("auth-expired", () => {
+        source.close();
+        if (logsStream === source) logsStream = null;
+        initialize();
+      });
+    }
+
+    async function recoverAdminSessionFromStream() {
+      if (authRecoveryInFlight) return;
+      authRecoveryInFlight = true;
+      try {
+        const response = await fetch("/v1/auth/state", { headers: { "Accept": "application/json" } });
+        if (!response.ok) return;
+        const state = await response.json();
+        if (!state.authenticated) showAuth(state);
+      } catch (_) {
+        // EventSource continues its own retry cycle while the server is unreachable.
+      } finally {
+        authRecoveryInFlight = false;
+      }
     }
 
     $("console-refresh").addEventListener("click", loadConsole);

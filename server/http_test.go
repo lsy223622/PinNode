@@ -24,6 +24,7 @@ type fakeTailscale struct {
 	ephemeralRequested []bool
 	accessTokens       []string
 	oauthCalls         int
+	deviceCalls        int
 	oauthToken         OAuthAccessToken
 	oauthErr           error
 	createAuthKeyErr   error
@@ -73,6 +74,7 @@ func (f *fakeTailscale) DeleteAuthKey(_ context.Context, _ string, id string) er
 func (f *fakeTailscale) GetDevice(context.Context, string, string) (Device, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.deviceCalls++
 	return f.device, nil
 }
 

@@ -271,7 +271,7 @@ paths:
         - $ref: "#/components/parameters/LastEventId"
       responses:
         "200":
-          description: Server-sent state events with a global sequence ID and reset events when the resume window is missed.
+          description: Server-sent state events with a global sequence ID, reset events when the state window is missed, and auth-expired when the administrator session is revoked.
           content:
             text/event-stream:
               schema:
@@ -324,7 +324,7 @@ paths:
         - $ref: "#/components/parameters/LastEventId"
       responses:
         "200":
-          description: Server-sent log events with a global sequence ID and reset events when the resume window is missed.
+          description: Server-sent log events with a global sequence ID, reset events when the log window is missed, and auth-expired when the administrator session is revoked.
           content:
             text/event-stream:
               schema:
@@ -480,6 +480,7 @@ paths:
         - sessionBearer: []
       requestBody:
         required: true
+        description: JSON body is limited to 131072 bytes; the request contains at most 32 entries and each message is limited to 2048 UTF-8 bytes.
         content:
           application/json:
             schema:
@@ -602,9 +603,12 @@ components:
         limits:
           type: object
           additionalProperties: false
-          required: [jsonBodyBytes]
+          required: [jsonBodyBytes, clientLogsBodyBytes, clientLogEntries, clientLogMessageBytes]
           properties:
             jsonBodyBytes: {type: integer, const: 16384}
+            clientLogsBodyBytes: {type: integer, const: 131072}
+            clientLogEntries: {type: integer, const: 32}
+            clientLogMessageBytes: {type: integer, const: 2048}
     ClientStateReport:
       type: object
       additionalProperties: false
@@ -715,7 +719,18 @@ components:
           items: {$ref: "#/components/schemas/AdminConsoleSession"}
         counts:
           type: object
-          additionalProperties: {type: integer, minimum: 0}
+          additionalProperties: false
+          required: [pending, sessions, healthy, warning, offline, unknown, ending, cleaning, attention]
+          properties:
+            pending: {type: integer, minimum: 0}
+            sessions: {type: integer, minimum: 0}
+            healthy: {type: integer, minimum: 0}
+            warning: {type: integer, minimum: 0}
+            offline: {type: integer, minimum: 0}
+            unknown: {type: integer, minimum: 0}
+            ending: {type: integer, minimum: 0}
+            cleaning: {type: integer, minimum: 0}
+            attention: {type: integer, minimum: 0}
     ErrorResponse:
       type: object
       additionalProperties: false

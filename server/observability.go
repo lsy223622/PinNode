@@ -31,15 +31,23 @@ type adminEvent struct {
 	Data     any
 }
 
+type adminEventSubscription struct {
+	kind   string
+	events chan adminEvent
+}
+
 type adminEventHub struct {
-	mu          sync.Mutex
-	next        uint64
-	events      []adminEvent
-	subscribers map[chan adminEvent]struct{}
+	mu           sync.Mutex
+	next         uint64
+	stateEvents  []adminEvent
+	logEvents    []adminEvent
+	stateDropped bool
+	logDropped   bool
+	subscribers  map[*adminEventSubscription]struct{}
 }
 
 func newAdminEventHub() *adminEventHub {
-	return &adminEventHub{subscribers: make(map[chan adminEvent]struct{})}
+	return &adminEventHub{subscribers: make(map[*adminEventSubscription]struct{})}
 }
 
 func (h *adminEventHub) publish(kind string, data any) uint64 {
@@ -47,16 +55,16 @@ func (h *adminEventHub) publish(kind string, data any) uint64 {
 	defer h.mu.Unlock()
 	h.next++
 	event := adminEvent{Sequence: h.next, Kind: kind, Data: data}
-	h.events = append(h.events, event)
-	if len(h.events) > adminEventBufferSize {
-		h.events = h.events[len(h.events)-adminEventBufferSize:]
-	}
+	h.appendEventLocked(event)
 	for subscriber := range h.subscribers {
+		if subscriber.kind != "" && subscriber.kind != kind {
+			continue
+		}
 		select {
-		case subscriber <- event:
+		case subscriber.events <- event:
 		default:
 			delete(h.subscribers, subscriber)
-			close(subscriber)
+			close(subscriber.events)
 		}
 	}
 	return event.Sequence
@@ -72,19 +80,35 @@ func (h *adminEventHub) publishLog(event LogEvent) LogEvent {
 	h.next++
 	event.Sequence = h.next
 	adminEvent := adminEvent{Sequence: h.next, Kind: "log", Data: event}
-	h.events = append(h.events, adminEvent)
-	if len(h.events) > adminEventBufferSize {
-		h.events = h.events[len(h.events)-adminEventBufferSize:]
-	}
+	h.appendEventLocked(adminEvent)
 	for subscriber := range h.subscribers {
+		if subscriber.kind != "" && subscriber.kind != "log" {
+			continue
+		}
 		select {
-		case subscriber <- adminEvent:
+		case subscriber.events <- adminEvent:
 		default:
 			delete(h.subscribers, subscriber)
-			close(subscriber)
+			close(subscriber.events)
 		}
 	}
 	return event
+}
+
+func (h *adminEventHub) appendEventLocked(event adminEvent) {
+	if event.Kind == "log" {
+		if len(h.logEvents) >= adminEventBufferSize {
+			h.logEvents = h.logEvents[1:]
+			h.logDropped = true
+		}
+		h.logEvents = append(h.logEvents, event)
+		return
+	}
+	if len(h.stateEvents) >= adminEventBufferSize {
+		h.stateEvents = h.stateEvents[1:]
+		h.stateDropped = true
+	}
+	h.stateEvents = append(h.stateEvents, event)
 }
 
 func (h *adminEventHub) latest() uint64 {
@@ -103,10 +127,7 @@ func (h *adminEventHub) recentLogs(limit int) (logs []LogEvent, latest, oldest u
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	latest = h.next
-	for _, event := range h.events {
-		if event.Kind != "log" {
-			continue
-		}
+	for _, event := range h.logEvents {
 		value, ok := event.Data.(LogEvent)
 		if !ok {
 			continue
@@ -125,15 +146,16 @@ func (h *adminEventHub) recentLogs(limit int) (logs []LogEvent, latest, oldest u
 func (h *adminEventHub) subscribe(kind string, after uint64) (replay []adminEvent, events <-chan adminEvent, cancel func(), missed bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.events) > 0 && after+1 < h.events[0].Sequence {
+	history, dropped := h.historyLocked(kind)
+	if dropped && len(history) > 0 && after < history[0].Sequence {
 		missed = true
 	}
-	for _, event := range h.events {
+	for _, event := range history {
 		if event.Sequence > after && (kind == "" || event.Kind == kind) {
 			replay = append(replay, event)
 		}
 	}
-	subscriber := make(chan adminEvent, 64)
+	subscriber := &adminEventSubscription{kind: kind, events: make(chan adminEvent, 64)}
 	h.subscribers[subscriber] = struct{}{}
 	var once sync.Once
 	cancel = func() {
@@ -141,17 +163,28 @@ func (h *adminEventHub) subscribe(kind string, after uint64) (replay []adminEven
 			h.mu.Lock()
 			if _, ok := h.subscribers[subscriber]; ok {
 				delete(h.subscribers, subscriber)
-				close(subscriber)
+				close(subscriber.events)
 			}
 			h.mu.Unlock()
 		})
 	}
-	return replay, subscriber, cancel, missed
+	return replay, subscriber.events, cancel, missed
+}
+
+func (h *adminEventHub) historyLocked(kind string) ([]adminEvent, bool) {
+	switch kind {
+	case "state":
+		return h.stateEvents, h.stateDropped
+	case "log":
+		return h.logEvents, h.logDropped
+	default:
+		return nil, false
+	}
 }
 
 var sensitiveLogPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^,\s]+`),
-	regexp.MustCompile(`(?i)(["']?\b(?:sessionToken|session_token|authKey|auth_key|password|clientSecret|client_secret|token|code|secret)\b["']?\s*[:=]\s*)(["'][^"']*["']|[^,\s}&]+)`),
+	regexp.MustCompile(`(?i)((?:authorization|cookie|set-cookie|x-api-key|x-auth-token)\s*[:=]\s*(?:bearer\s+)?)[^,\s;]+`),
+	regexp.MustCompile(`(?i)(["']?\b(?:sessionToken|session_token|authKey|auth_key|password|clientSecret|client_secret|accessToken|access_token|oauthSecret|oauth_secret|apiKey|api_key|auth-key|pairingCode|pairing_code|oneTimeCode|one_time_code|cookie|pin|token|code|secret)\b["']?\s*[:=]\s*)(["'][^"']*["']|[^,\s}&]+)`),
 }
 
 func redactLogMessage(message string) string {
@@ -181,13 +214,37 @@ type structuredLogger struct {
 }
 
 func (l *structuredLogger) Printf(format string, args ...any) {
+	l.PrintfComponent("server", format, args...)
+}
+
+func (l *structuredLogger) PrintfComponent(component, format string, args ...any) {
+	l.logf(inferLogLevel(fmt.Sprintf(format, args...)), component, format, args...)
+}
+
+func (l *structuredLogger) Infof(component, format string, args ...any) {
+	l.logf("INFO", component, format, args...)
+}
+
+func (l *structuredLogger) Warnf(component, format string, args ...any) {
+	l.logf("WARN", component, format, args...)
+}
+
+func (l *structuredLogger) Errorf(component, format string, args ...any) {
+	l.logf("ERROR", component, format, args...)
+}
+
+func (l *structuredLogger) logf(level, component, format string, args ...any) {
 	message := redactLogMessage(fmt.Sprintf(format, args...))
+	component = strings.TrimSpace(component)
+	if component == "" {
+		component = "server"
+	}
 	l.base.Printf("%s", message)
 	l.events.publishLog(LogEvent{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Level:     inferLogLevel(message),
+		Level:     level,
 		Source:    "server",
-		Component: "server",
+		Component: component,
 		Message:   message,
 	})
 }

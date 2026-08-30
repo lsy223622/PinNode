@@ -60,11 +60,12 @@ object TSLog {
   internal fun redactForUpload(message: String): String {
     var redacted = message
     redacted =
-        Regex("(?i)(authorization\\s*[:=]\\s*(?:bearer\\s+)?)[^,\\s]+")
+        Regex(
+                "(?i)((?:authorization|cookie|set-cookie|x-api-key|x-auth-token)\\s*[:=]\\s*(?:bearer\\s+)?)[^,\\s;]+")
             .replace(redacted, "$1[REDACTED]")
     redacted =
         Regex(
-                "(?i)([\\\"']?\\b(?:sessionToken|session_token|authKey|auth_key|password|clientSecret|client_secret|token|code|secret)\\b[\\\"']?\\s*[:=]\\s*)([\\\"'][^\\\"']*[\\\"']|[^,\\s}&]+)")
+                "(?i)([\\\"']?\\b(?:sessionToken|session_token|authKey|auth_key|password|clientSecret|client_secret|accessToken|access_token|oauthSecret|oauth_secret|apiKey|api_key|auth-key|pairingCode|pairing_code|oneTimeCode|one_time_code|cookie|pin|token|code|secret)\\b[\\\"']?\\s*[:=]\\s*)([\\\"'][^\\\"']*[\\\"']|[^,\\s}&]+)")
             .replace(redacted, "$1[REDACTED]")
     return if (redacted.length > 2048) redacted.take(2048) + "…" else redacted
   }

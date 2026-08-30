@@ -109,6 +109,11 @@ go run -tags debug .
 登录后添加、命名并选择加密保存的 Tailscale OAuth client（推荐）或 API access token，再选择快速模板或微调
 设置生成一次性 PIN。管理会话使用 HttpOnly Cookie、CSRF 校验、限速和递增退避保护。
 
+管理页的配置、Console 状态和实时日志是三个同级视图。Console 展示待兑换 PIN、活动会话、
+客户端状态和 Tailscale 节点快照；实时日志支持服务端/客户端来源、级别、组件、会话/节点
+和文本筛选，并通过有界 SSE 缓冲自动重连。管理员 session 失效后，两个事件流都会被服务端
+收回，客户端日志不会跨 session 改绑。
+
 服务端只创建 `reusable=false`、`preauthorized=true` 的短期一次性 auth key；加入后的
 Android 设备是非 ephemeral 节点，因此默认能够长期保持登录。Tailscale credential
 只以 AES-256-GCM 密文保存在服务端数据库中；实例根密钥首次启动时自动生成并独立保存。

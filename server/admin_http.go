@@ -34,7 +34,7 @@ func (s *Service) handleAdminAuthState(w http.ResponseWriter, r *http.Request) {
 	}
 	exists, err := s.store.AdminExists()
 	if err != nil {
-		s.logger.Printf("读取管理员初始化状态失败: %v", err)
+		s.logger.Errorf("auth", "读取管理员初始化状态失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "auth_state_failed", "读取登录状态失败")
 		return
 	}
@@ -44,7 +44,7 @@ func (s *Service) handleAdminAuthState(w http.ResponseWriter, r *http.Request) {
 		"authenticated": false,
 	}
 	if session, ok, err := s.adminSession(r); err != nil {
-		s.logger.Printf("读取管理员会话失败: %v", err)
+		s.logger.Errorf("auth", "读取管理员会话失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "auth_state_failed", "读取登录状态失败")
 		return
 	} else if ok {
@@ -120,7 +120,7 @@ func (s *Service) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.store.CreateAdmin(username, passwordHash, time.Now())
 	if err != nil {
-		s.logger.Printf("创建管理员账号失败: %v", err)
+		s.logger.Errorf("auth", "创建管理员账号失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "admin_setup_failed", "创建管理员账号失败")
 		return
 	}
@@ -135,7 +135,7 @@ func (s *Service) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := s.issueAdminSession(w, r, admin)
 	if err != nil {
-		s.logger.Printf("创建管理员会话失败: %v", err)
+		s.logger.Errorf("auth", "创建管理员会话失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "admin_session_create_failed", "创建管理员会话失败")
 		return
 	}
@@ -169,7 +169,7 @@ func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	admin, ok, err := s.store.GetAdminByUsername(username)
 	if err != nil {
-		s.logger.Printf("读取管理员账号失败: %v", err)
+		s.logger.Errorf("auth", "读取管理员账号失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "admin_login_failed", "登录失败")
 		return
 	}
@@ -188,20 +188,20 @@ func (s *Service) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if usernameErr != nil || !ok || !passwordMatches {
 		if ok {
 			if _, failureErr := s.store.RecordAdminLoginFailure(admin.ID, now); failureErr != nil {
-				s.logger.Printf("记录管理员登录失败状态: %v", failureErr)
+				s.logger.Errorf("auth", "记录管理员登录失败状态: %v", failureErr)
 			}
 		}
 		writeError(w, http.StatusUnauthorized, "admin_credentials_invalid", "用户名或密码错误")
 		return
 	}
 	if err := s.store.ResetAdminLoginFailures(admin.ID, now); err != nil {
-		s.logger.Printf("重置管理员登录失败状态: %v", err)
+		s.logger.Errorf("auth", "重置管理员登录失败状态: %v", err)
 		writeError(w, http.StatusInternalServerError, "admin_login_failed", "登录失败")
 		return
 	}
 	session, err := s.issueAdminSession(w, r, admin)
 	if err != nil {
-		s.logger.Printf("创建管理员会话失败: %v", err)
+		s.logger.Errorf("auth", "创建管理员会话失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "admin_login_failed", "登录失败")
 		return
 	}
@@ -241,7 +241,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 	case http.MethodGet:
 		credentials, err := s.store.ListTailscaleCredentials()
 		if err != nil {
-			s.logger.Printf("读取 Tailscale 凭据列表失败: %v", err)
+			s.logger.Errorf("tailscale", "读取 Tailscale 凭据列表失败: %v", err)
 			writeError(w, http.StatusInternalServerError, "credential_list_failed", "读取凭据列表失败")
 			return
 		}
@@ -284,7 +284,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 				return
 			}
 			if err := s.tailscale.ValidateCredential(r.Context(), token); err != nil {
-				s.logger.Printf("验证 Tailscale API token 失败: %v", err)
+				s.logger.Errorf("tailscale", "验证 Tailscale API token 失败: %v", err)
 				code, message := tailscaleFailure(err, "Tailscale API token 验证失败，请检查有效期和 tailnet")
 				writeError(w, http.StatusBadRequest, code, message)
 				return
@@ -301,7 +301,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 			var err error
 			oauthToken, err = s.tailscale.ExchangeOAuthToken(r.Context(), clientID, clientSecret)
 			if err != nil {
-				s.logger.Printf("交换 Tailscale OAuth token 失败: %v", err)
+				s.logger.Errorf("tailscale", "交换 Tailscale OAuth token 失败: %v", err)
 				code, message := tailscaleFailure(err, "Tailscale OAuth client 验证失败，请检查 ID、secret 和权限")
 				writeError(w, http.StatusBadRequest, code, message)
 				return
@@ -311,7 +311,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 				return
 			}
 			if err := s.tailscale.ValidateCredential(r.Context(), oauthToken.Token); err != nil {
-				s.logger.Printf("验证 Tailscale OAuth 权限失败: %v", err)
+				s.logger.Errorf("tailscale", "验证 Tailscale OAuth 权限失败: %v", err)
 				code, message := tailscaleFailure(err, "OAuth client 缺少 auth_keys 权限或 tailnet 不匹配")
 				writeError(w, http.StatusBadRequest, code, message)
 				return
@@ -333,7 +333,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		}
 		ciphertext, err := s.cipher.Seal(id, plaintext)
 		if err != nil {
-			s.logger.Printf("加密 Tailscale 凭据失败: %v", err)
+			s.logger.Errorf("tailscale", "加密 Tailscale 凭据失败: %v", err)
 			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
 		}
@@ -346,7 +346,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 				writeError(w, http.StatusConflict, "credential_name_conflict", "令牌名称已经存在")
 				return
 			}
-			s.logger.Printf("保存 Tailscale 凭据失败: %v", err)
+			s.logger.Errorf("tailscale", "保存 Tailscale 凭据失败: %v", err)
 			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
 		}
@@ -380,7 +380,7 @@ func (s *Service) requireAdminAPI(w http.ResponseWriter, r *http.Request, requir
 func (s *Service) requireAdminSession(w http.ResponseWriter, r *http.Request) (AdminSession, bool) {
 	session, ok, err := s.adminSession(r)
 	if err != nil {
-		s.logger.Printf("读取管理员会话失败: %v", err)
+		s.logger.Errorf("auth", "读取管理员会话失败: %v", err)
 		writeError(w, http.StatusInternalServerError, "admin_auth_failed", "管理员认证失败")
 		return AdminSession{}, false
 	}

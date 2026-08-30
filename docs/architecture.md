@@ -87,6 +87,18 @@ auth key 有效期十分钟、`reusable=false`、`preauthorized=true`；加入�
 2. OEM 直接强杀时没有回调，VPN 随进程立即断开。该策略的加密会话在下一次进程启动
    时绝不恢复，并转换为待清理记录，补做 logout、路由撤销和设备删除。
 
+## 管理员可观测性
+
+管理页面的配置、Console 状态和实时日志是三个同级视图。Console 只查询数据库中尚未
+`stopped` 的会话，不受历史会话查询的数量上限影响；读取 Tailscale 节点状态使用带五秒
+超时的短 TTL 快照，控制面暂时不可用时降级为 `Unknown`，不会阻塞整个页面响应。健康
+统计同时返回所有状态和 `attention`，后者等于活动会话中所有非 `Healthy` 状态。
+
+服务端状态事件和日志事件使用各自最多 2048 项的进程内环形缓冲，并共享递增事件序列；
+日志不写入 SQLite。管理员 SSE 在建立后仍会周期性检查管理员 session，session 被登出或
+删除时发送 `auth-expired` 并关闭连接。客户端日志在 Android 和服务端各脱敏一次，且每条
+待上传日志绑定原 session；session 结束时未上传的条目丢弃，不能改绑给新 session。
+
 ## Android 网络选择
 
 `RescueNetworkController` 同时观察非 VPN Wi-Fi 和移动网络。Wi-Fi 只要求存在带网关

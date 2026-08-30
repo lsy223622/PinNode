@@ -117,3 +117,22 @@ pinnode-v<version>-<commit>-LICENSES.md
 5. 服务端部署时从 Release 下载 `pinnode-server-v<version>-linux-amd64-<commit>.tar.gz`，
    先核对 SHA-256，解压后使用其中的 `pinnode-server`，再按 `server/README.md` 的
    systemd/HTTPS 反代流程部署；不要把数据库、实例密钥、环境文件或管理凭据放入 Release。
+
+## 发布前验收矩阵
+
+正式打 tag 前至少保留以下证据；构建成功本身不等于链路验收完成：
+
+- 服务端：`go test ./...`、`go vet ./...`，再用 Debug 构建在本地 `6634` 启动；若通过
+  反代验收，可信代理配置只包含实际反代来源的精确 CIDR，并分别检查 origin 和 HTTPS
+  域名的 `/healthz`、管理登录、静态资源缓存头和 SSE。
+- 管理页：创建、自然过期和兑换 PIN；Console 的 pending/active 转移、六种健康状态、
+  多于历史查询上限的活动会话、节点离线/控制面故障降级；Logs 的来源/级别/组件/会话
+  筛选、暂停、继续、自动滚动、断线恢复、`reset`、无重复和 session 失效收回。
+- Android：在专用 AVD 上安装当前 Debug APK，完成会话建立、状态同步、日志上传、短暂
+  网络故障后的有限补发、正常停止、超时清理和清理失败重试；记录固定 ADB serial，不能
+  把 instrumentation APK 构建成功当作 connected test 成功。真机重启、OEM 特定强杀和
+  不同路由器/调制解调器拓扑若未执行，保留为单独证据缺口。
+- 发布包：清空 AVD 应用数据后安装 Release APK，核对 application ID、版本、签名证书
+  指纹、服务端变体和内嵌许可证；运行 `apksigner verify --verbose --print-certs`，再
+  用同一 `<version>-<commit>` 核对 APK、服务端压缩包和 SHA-256 文件。签名密码只从当前
+  进程环境传入，keystore 不进入仓库、构建产物、临时记录或命令输出。

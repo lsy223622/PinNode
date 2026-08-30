@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -149,6 +150,44 @@ func TestConsumeCodeIsAtomicAndSingleUse(t *testing.T) {
 	} else if ok {
 		t.Fatal("已消费代码再次消费成功")
 	}
+}
+
+func TestListActiveSessionsIsNotLimitedByHistoryWindow(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+	now := time.Now()
+	config := DefaultSessionConfig()
+
+	for index := 0; index < 1001; index++ {
+		status := SessionStopped
+		if index == 0 {
+			status = SessionActive
+		}
+		if err := store.PutSession(Session{
+			ID:               "history-session-" + formatTestIndex(index),
+			TokenHash:        "history-token-" + formatTestIndex(index),
+			AuthKeyID:        "history-key-" + formatTestIndex(index),
+			ProvisioningName: "history-pinnode-" + formatTestIndex(index),
+			Config:           config,
+			CreatedAt:        now.Add(time.Duration(index) * time.Millisecond),
+			UpdatedAt:        now.Add(time.Duration(index) * time.Millisecond),
+			Status:           status,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sessions, err := store.ListActiveSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "history-session-"+formatTestIndex(0) {
+		t.Fatalf("活动会话查询被历史窗口截断: len=%d sessions=%+v", len(sessions), sessions)
+	}
+}
+
+func formatTestIndex(index int) string {
+	return fmt.Sprintf("%04d", index)
 }
 
 func TestExpiredCodeCannotBeConsumed(t *testing.T) {

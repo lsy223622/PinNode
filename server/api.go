@@ -64,12 +64,16 @@ func retryableAPIError(code string) bool {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	return decodeJSONWithLimit(w, r, target, maxJSONBodyBytes)
+}
+
+func decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, target any, maxBytes int64) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.EqualFold(mediaType, "application/json") {
 		writeError(w, http.StatusUnsupportedMediaType, "content_type_invalid", "请求必须使用 application/json")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {

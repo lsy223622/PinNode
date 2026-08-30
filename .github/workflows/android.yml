@@ -43,7 +43,7 @@ jobs:
         run: make go-test
 
       - name: Build APKs
-        run: make pinnode-debug.apk
+        run: make pinnode-debug
 
       - name: Build instrumentation-test APK
         run: make pinnode-application-test.apk
