@@ -515,6 +515,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StopSessionResponse"
+        "202":
+          description: Another worker currently holds the cleanup lease.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopSessionResponse"
         "4XX":
           $ref: "#/components/responses/Error"
         "5XX":
@@ -900,11 +906,19 @@ components:
     StartSessionRequest:
       type: object
       additionalProperties: false
-      required: [code]
+      description: The server compiles policy and checks required client capabilities before creating an auth key or session.
+      required: [code, protocolVersion, clientVersion, clientCapabilities]
       properties:
         code: {type: string, pattern: "^[0-9]{6}$"}
         gatewayRoute: {type: string, default: ""}
         wifiSubnetRoute: {type: string, default: ""}
+        protocolVersion: {type: integer, const: 1}
+        clientVersion: {type: string, minLength: 1, maxLength: 128}
+        clientCapabilities:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64, pattern: "^[a-z0-9.-]+$"}
     StartSessionResponse:
       type: object
       additionalProperties: false
@@ -983,7 +997,7 @@ components:
       properties:
         protocolVersion: {type: integer, const: 1}
         appliedConfigRevision: {type: integer, minimum: 0}
-        clientVersion: {type: string, maxLength: 128}
+        clientVersion: {type: string, minLength: 1, maxLength: 128}
         clientCapabilities:
           type: array
           maxItems: 32
@@ -1030,4 +1044,4 @@ components:
       additionalProperties: false
       required: [status]
       properties:
-        status: {type: string, enum: [stopped, already-stopped]}
+        status: {type: string, enum: [cleaning, stopped, already-stopped]}

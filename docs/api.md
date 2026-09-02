@@ -48,8 +48,18 @@
 - `client-state-report-v1`
 - `client-logs-v1`
 - `structured-errors-v1`
+- `session-policy-capabilities-v1`
 
 v1 冻结后，兼容变更只能增加可选响应字段、能力标识或新资源；不能改变已有字段含义、把可选字段改为必填、复用错误码表达另一种错误，或改变现有认证方式。
+
+创建会话时，Android 必须在请求中携带 `protocolVersion`、`clientVersion` 和
+`clientCapabilities`。能力名称是小写、稳定的客户端事实，不与服务端 `features`
+混用。当前客户端能力包括：`session-sync-v1`、`client-state-report-v1`、
+`client-logs-v1`、`rescue-routing-v1`、`route-advertisement-v1`、`exit-node-v1` 和
+`advanced-prefs-v1`。其中 `session-sync-v1` 是所有会话的必要能力；其余能力按
+规范化配置编译出的 policy 结果成为必要或可选能力。服务端在创建 Tailscale auth key
+之前完成 policy/capability 检查，缺少必要能力返回不可重试的
+`client_capability_missing`，不会消费 pairing code 或创建 Session。
 
 ## 3. 认证模型
 
@@ -164,7 +174,8 @@ pairing code 请求中的 `config` 是对安全默认值的部分覆盖；服务
     "session-sync-v1",
     "client-state-report-v1",
     "client-logs-v1",
-    "structured-errors-v1"
+    "structured-errors-v1",
+    "session-policy-capabilities-v1"
   ],
   "limits": {
     "jsonBodyBytes": 16384,
@@ -246,7 +257,18 @@ OAuth 交换会显式请求 `auth_keys devices:core devices:routes` scope 和当
 {
   "code": "123456",
   "gatewayRoute": "192.168.1.1/32",
-  "wifiSubnetRoute": "192.168.1.0/24"
+  "wifiSubnetRoute": "192.168.1.0/24",
+  "protocolVersion": 1,
+  "clientVersion": "0.1.0",
+  "clientCapabilities": [
+    "session-sync-v1",
+    "client-state-report-v1",
+    "client-logs-v1",
+    "rescue-routing-v1",
+    "route-advertisement-v1",
+    "exit-node-v1",
+    "advanced-prefs-v1"
+  ]
 }
 ```
 
@@ -255,7 +277,7 @@ OAuth 交换会显式请求 `auth_keys devices:core devices:routes` scope 和当
 ```json
 {
   "protocolVersion": 1,
-  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "client-state-report-v1", "client-logs-v1", "structured-errors-v1"],
+  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "client-state-report-v1", "client-logs-v1", "structured-errors-v1", "session-policy-capabilities-v1"],
   "sessionId": "...",
   "sessionToken": "...",
   "authKey": "tskey-auth-...",
@@ -299,7 +321,7 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
   "protocolVersion": 1,
   "appliedConfigRevision": 1,
   "clientVersion": "0.1.0",
-  "clientCapabilities": ["session-sync-v1", "client-state-report-v1", "client-logs-v1"],
+  "clientCapabilities": ["session-sync-v1", "client-state-report-v1", "client-logs-v1", "rescue-routing-v1", "route-advertisement-v1", "exit-node-v1", "advanced-prefs-v1"],
   "clientState": {
     "backendState": "running",
     "tailscaleRunning": true,
@@ -328,7 +350,7 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 ```json
 {
   "protocolVersion": 1,
-  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "client-state-report-v1", "client-logs-v1", "structured-errors-v1"],
+  "serverFeatures": ["idempotent-session-start-v1", "revisioned-session-config-v1", "session-sync-v1", "client-state-report-v1", "client-logs-v1", "structured-errors-v1", "session-policy-capabilities-v1"],
   "status": "active",
   "serverTime": "2026-08-26T08:01:00Z",
   "nextSyncAfterSeconds": 60,
@@ -372,7 +394,7 @@ Android 客户端在本地保留最多 200 条或约 256 KiB 的待上传日志�
 
 ### 6.11 停止会话
 
-`POST /v1/sessions/{sessionId}/stop` 无请求体。服务端先向 Tailscale 发送 `{"routes":[]}`，再删除精确节点并撤销尚存的 auth key。成功为 `{"status":"stopped"}`；已经停止时为 `{"status":"already-stopped"}`。清理失败进入 `cleanup_failed`，reaper 会继续重试。
+`POST /v1/sessions/{sessionId}/stop` 无请求体。服务端先向 Tailscale 发送 `{"routes":[]}`，再删除精确节点并撤销尚存的 auth key。清理完成为 `{"status":"stopped"}`；已经停止时为 `{"status":"already-stopped"}`。如果另一个清理 worker 仍持有有效租约，服务端返回 `202` 和 `{"status":"cleaning"}`，客户端必须保留 pending cleanup，不能把它当成完成。清理失败进入 `cleanup_failed`，reaper 会继续重试。
 
 ## 7. 稳定错误码
 
@@ -383,7 +405,7 @@ Android 客户端在本地保留最多 200 条或约 256 KiB 的待上传日志�
 | Tailscale 凭据 | `credential_required`, `credential_unavailable`, `credential_name_invalid`, `credential_type_unsupported`, `credential_list_failed`, `credential_save_failed`, `api_token_invalid`, `oauth_client_invalid`, `oauth_scope_invalid`, `credential_name_conflict`, `tailscale_permission_denied`, `tailscale_rate_limited`, `tailscale_unavailable` |
 | pairing code | `pairing_code_format_invalid`, `pairing_code_invalid`, `pairing_code_read_failed`, `pairing_code_create_failed` |
 | 管理监控 | `console_read_failed`, `stream_unsupported` |
-| 会话创建 | `idempotency_key_invalid`, `idempotency_key_conflict`, `session_config_invalid`, `session_config_expired`, `wifi_gateway_required`, `wifi_subnet_required`, `gateway_route_invalid`, `wifi_subnet_route_invalid`, `session_create_failed`, `session_replay_failed` |
+| 会话创建 | `idempotency_key_invalid`, `idempotency_key_conflict`, `session_config_invalid`, `session_config_expired`, `wifi_gateway_required`, `wifi_subnet_required`, `gateway_route_invalid`, `wifi_subnet_route_invalid`, `client_capability_missing`, `session_create_failed`, `session_replay_failed` |
 | 会话运行 | `session_list_failed`, `session_path_not_found`, `session_operation_not_found`, `session_read_failed`, `session_not_found`, `session_auth_required`, `session_auth_invalid`, `session_state_conflict`, `session_expired`, `protocol_version_unsupported`, `config_revision_invalid`, `client_metadata_invalid`, `client_state_invalid`, `client_logs_invalid`, `node_id_invalid`, `device_not_ready`, `device_identity_mismatch`, `device_not_managed`, `device_already_bound`, `device_attach_failed`, `device_binding_refresh_failed`, `session_sync_failed`, `session_cleanup_start_failed`, `session_cleanup_failed` |
 
 每个操作的成功状态和请求/响应结构以 OpenAPI 文件为准；错误状态使用本节的稳定错误码和统一错误信封。

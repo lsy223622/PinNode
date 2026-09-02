@@ -284,7 +284,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 				return
 			}
 			if err := s.tailscale.ValidateCredential(r.Context(), token); err != nil {
-				s.logger.Errorf("tailscale", "验证 Tailscale API token 失败: %v", err)
+				s.logger.Errorf("tailscale", "验证 Tailscale API token 失败: error=%s", safeDiagnosticError(err))
 				code, message := tailscaleFailure(err, "Tailscale API token 验证失败，请检查有效期和 tailnet")
 				writeError(w, http.StatusBadRequest, code, message)
 				return
@@ -301,7 +301,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 			var err error
 			oauthToken, err = s.tailscale.ExchangeOAuthToken(r.Context(), clientID, clientSecret)
 			if err != nil {
-				s.logger.Errorf("tailscale", "交换 Tailscale OAuth token 失败: %v", err)
+				s.logger.Errorf("tailscale", "交换 Tailscale OAuth token 失败: error=%s", safeDiagnosticError(err))
 				code, message := tailscaleFailure(err, "Tailscale OAuth client 验证失败，请检查 ID、secret 和权限")
 				writeError(w, http.StatusBadRequest, code, message)
 				return
@@ -311,7 +311,7 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 				return
 			}
 			if err := s.tailscale.ValidateCredential(r.Context(), oauthToken.Token); err != nil {
-				s.logger.Errorf("tailscale", "验证 Tailscale OAuth 权限失败: %v", err)
+				s.logger.Errorf("tailscale", "验证 Tailscale OAuth 权限失败: error=%s", safeDiagnosticError(err))
 				code, message := tailscaleFailure(err, "OAuth client 缺少 auth_keys 权限或 tailnet 不匹配")
 				writeError(w, http.StatusBadRequest, code, message)
 				return

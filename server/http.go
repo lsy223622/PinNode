@@ -282,7 +282,7 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		s.logger.Errorf("session", "保存配对代码失败: %v", err)
+		s.logger.Errorf("session", "保存配对代码失败: error=%s", safeDiagnosticError(err))
 		writeError(w, http.StatusInternalServerError, "pairing_code_create_failed", "生成配对代码失败")
 		return
 	}
@@ -300,9 +300,12 @@ type pairingCodeRequest struct {
 }
 
 type startSessionRequest struct {
-	Code            string `json:"code"`
-	GatewayRoute    string `json:"gatewayRoute"`
-	WiFiSubnetRoute string `json:"wifiSubnetRoute"`
+	Code               string   `json:"code"`
+	GatewayRoute       string   `json:"gatewayRoute"`
+	WiFiSubnetRoute    string   `json:"wifiSubnetRoute"`
+	ProtocolVersion    int      `json:"protocolVersion"`
+	ClientVersion      string   `json:"clientVersion"`
+	ClientCapabilities []string `json:"clientCapabilities"`
 }
 
 type startSessionResponse struct {
@@ -343,6 +346,16 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "pairing_code_format_invalid", "code 必须是六位数字")
 		return
 	}
+	if request.ProtocolVersion != protocolVersion {
+		writeError(w, http.StatusConflict, "protocol_version_unsupported", "客户端协议版本不受支持")
+		return
+	}
+	if strings.TrimSpace(request.ClientVersion) == "" || len(request.ClientVersion) > 128 ||
+		strings.ContainsAny(request.ClientVersion, "\r\n\x00") ||
+		!validCapabilities(request.ClientCapabilities) {
+		writeError(w, http.StatusBadRequest, "client_metadata_invalid", "客户端版本或能力列表无效")
+		return
+	}
 	codeHash := hashPairingCode(s.config.CodePepper, request.Code)
 	if !s.allowRate(w, "start-code:"+codeHash, 5, 5*time.Minute) {
 		return
@@ -375,7 +388,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 	if err := s.store.DeleteExpiredSessionStartReplays(time.Now()); err != nil {
-		s.logger.Errorf("session", "清理会话创建重放记录失败: %v", err)
+		s.logger.Errorf("session", "清理会话创建重放记录失败: error=%s", safeDiagnosticError(err))
 	}
 	if replay, ok, err := s.store.GetSessionStartReplay(idempotencyKeyHash); err != nil {
 		writeError(w, http.StatusInternalServerError, "session_create_failed", "读取会话创建状态失败")
@@ -387,7 +400,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		}
 		plaintext, err := s.cipher.Open("session-start:"+idempotencyKeyHash, replay.Ciphertext)
 		if err != nil {
-			s.logger.Errorf("session", "解密会话创建重放响应失败: sessionRef=%s error=%v", diagnosticIdentifier(replay.SessionID), err)
+			s.logger.Errorf("session", "解密会话创建重放响应失败: sessionRef=%s error=%s", diagnosticIdentifier(replay.SessionID), safeDiagnosticError(err))
 			writeError(w, http.StatusInternalServerError, "session_replay_failed", "读取会话创建响应失败")
 			return
 		}
@@ -404,18 +417,12 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	config, configCreatedAt, credentialID, ok, err := s.store.GetRedeemableCodeWithCredential(codeHash, now)
 	if err != nil {
-		s.logger.Errorf("session", "读取配对代码失败: %v", err)
+		s.logger.Errorf("session", "读取配对代码失败: error=%s", safeDiagnosticError(err))
 		writeError(w, http.StatusInternalServerError, "pairing_code_read_failed", "读取配对代码失败")
 		return
 	}
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "pairing_code_invalid", "code 无效、已使用或已过期")
-		return
-	}
-	accessToken, err := s.credentialToken(r.Context(), credentialID)
-	if err != nil {
-		s.logger.Errorf("tailscale", "读取 Tailscale 凭据失败: credentialRef=%s error=%v", diagnosticIdentifier(credentialID), err)
-		writeError(w, http.StatusBadGateway, "credential_unavailable", "该授权码关联的 Tailscale 管理凭据不可用")
 		return
 	}
 	if config.RequiresWiFi() && request.GatewayRoute == "" {
@@ -426,15 +433,32 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "wifi_subnet_required", "当前配置需要可识别的 Wi-Fi IPv4 子网")
 		return
 	}
+	policy, err := CompileSessionPolicy(config, request.GatewayRoute, request.WiFiSubnetRoute)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "session_config_invalid", "配置策略不允许: "+err.Error())
+		return
+	}
+	if missing := missingClientCapabilities(request.ClientCapabilities, policy.RequiredClientCapabilities); len(missing) != 0 {
+		writeError(w, http.StatusPreconditionFailed, "client_capability_missing",
+			"客户端缺少必要能力: "+strings.Join(missing, ", "))
+		return
+	}
+	config = policy.Config
 	logoutAt := config.LogoutAt(configCreatedAt, now)
 	if !logoutAt.IsZero() && !logoutAt.After(now) {
 		writeError(w, http.StatusGone, "session_config_expired", "该配置的自动退出时间已经到达")
 		return
 	}
+	accessToken, err := s.credentialToken(r.Context(), credentialID)
+	if err != nil {
+		s.logger.Errorf("tailscale", "读取 Tailscale 凭据失败: credentialRef=%s error=%s", diagnosticIdentifier(credentialID), safeDiagnosticError(err))
+		writeError(w, http.StatusBadGateway, "credential_unavailable", "该授权码关联的 Tailscale 管理凭据不可用")
+		return
+	}
 
 	authKey, err := s.tailscale.CreateAuthKey(r.Context(), accessToken, s.config.ProvisioningTTL, false)
 	if err != nil {
-		s.logger.Errorf("tailscale", "创建 Tailscale auth key 失败: %v", err)
+		s.logger.Errorf("tailscale", "创建 Tailscale auth key 失败: error=%s", safeDiagnosticError(err))
 		code, message := tailscaleFailure(err, "创建 Tailscale auth key 失败")
 		writeError(w, http.StatusBadGateway, code, message)
 		return
@@ -452,8 +476,8 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		AuthKeyID:            authKey.ID,
 		ProvisioningName:     provisioningHostname(sessionToken[:16]),
 		Route:                request.GatewayRoute,
-		Routes:               config.EffectiveRoutes(request.GatewayRoute, request.WiFiSubnetRoute),
-		WiFiRoutes:           config.EffectiveWiFiRoutes(request.GatewayRoute, request.WiFiSubnetRoute),
+		Routes:               policy.Routes,
+		WiFiRoutes:           policy.WiFiRoutes,
 		Config:               config,
 		PairingCodeHash:      codeHash,
 		ConfigRevision:       1,
@@ -497,7 +521,7 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !created {
 		_ = s.tailscale.DeleteAuthKey(r.Context(), accessToken, authKey.ID)
 		if err != nil {
-			s.logger.Errorf("session", "保存会话失败: %v", err)
+			s.logger.Errorf("session", "保存会话失败: error=%s", safeDiagnosticError(err))
 			writeError(w, http.StatusInternalServerError, "session_create_failed", "创建会话失败")
 		} else {
 			writeError(w, http.StatusUnauthorized, "pairing_code_invalid", "code 无效、已使用或已过期")
@@ -524,7 +548,7 @@ func (s *Service) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions, err := s.store.ListSessions(limit)
 	if err != nil {
-		s.logger.Errorf("session", "读取历史会话失败: %v", err)
+		s.logger.Errorf("session", "读取历史会话失败: error=%s", safeDiagnosticError(err))
 		writeError(w, http.StatusInternalServerError, "session_list_failed", "读取历史会话失败")
 		return
 	}
@@ -543,12 +567,12 @@ func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := parts[0]
-	if !s.allowRate(w, "session-auth:"+credentialFingerprint(bearerToken(r)), 30, 5*time.Minute) {
+	if !s.allowRate(w, "session-auth:"+credentialFingerprint(bearerToken(r)), 300, 5*time.Minute) {
 		return
 	}
 	session, ok, err := s.store.GetSession(sessionID)
 	if err != nil {
-		s.logger.Errorf("session", "读取会话失败: %v", err)
+		s.logger.Errorf("session", "读取会话失败: error=%s", safeDiagnosticError(err))
 		writeError(w, http.StatusInternalServerError, "session_read_failed", "读取会话失败")
 		return
 	}
@@ -626,14 +650,14 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 	if session.Status == SessionActive && session.DeviceID == request.NodeID {
 		if session.Config.TailscaleIP != "" {
 			if err := s.tailscale.SetDeviceIPv4(r.Context(), accessToken, request.NodeID, session.Config.TailscaleIP); err != nil {
-				s.logger.Errorf("tailscale", "重新确认设备 Tailscale IP 失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
+				s.logger.Errorf("tailscale", "重新确认设备 Tailscale IP 失败: nodeRef=%s error=%s", diagnosticIdentifier(request.NodeID), safeDiagnosticError(err))
 				code, message := tailscaleFailure(err, "设置客户端 Tailscale IP 失败")
 				writeError(w, http.StatusBadGateway, code, message)
 				return
 			}
 		}
 		if err := s.tailscale.SetDeviceRoutes(r.Context(), accessToken, request.NodeID, session.Routes); err != nil {
-			s.logger.Errorf("tailscale", "重新确认设备路由失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
+			s.logger.Errorf("tailscale", "重新确认设备路由失败: nodeRef=%s error=%s", diagnosticIdentifier(request.NodeID), safeDiagnosticError(err))
 			code, message := tailscaleFailure(err, "启用会话路由失败")
 			writeError(w, http.StatusBadGateway, code, message)
 			return
@@ -672,7 +696,7 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		session.ID, request.NodeID, now, s.syncDeadline(session, now),
 	)
 	if err != nil {
-		s.logger.Errorf("session", "绑定设备失败: sessionRef=%s error=%v", diagnosticIdentifier(session.ID), err)
+		s.logger.Errorf("session", "绑定设备失败: sessionRef=%s error=%s", diagnosticIdentifier(session.ID), safeDiagnosticError(err))
 		writeError(w, http.StatusInternalServerError, "device_attach_failed", "绑定设备失败")
 		return
 	}
@@ -683,7 +707,7 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 	if session.Config.TailscaleIP != "" {
 		if err := s.tailscale.SetDeviceIPv4(r.Context(), accessToken, request.NodeID, session.Config.TailscaleIP); err != nil {
 			_ = s.store.DetachDevice(session.ID, request.NodeID, now)
-			s.logger.Errorf("tailscale", "设置设备 Tailscale IP 失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
+			s.logger.Errorf("tailscale", "设置设备 Tailscale IP 失败: nodeRef=%s error=%s", diagnosticIdentifier(request.NodeID), safeDiagnosticError(err))
 			code, message := tailscaleFailure(err, "设置客户端 Tailscale IP 失败")
 			writeError(w, http.StatusBadGateway, code, message)
 			return
@@ -691,7 +715,7 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 	}
 	if err := s.tailscale.SetDeviceRoutes(r.Context(), accessToken, request.NodeID, session.Routes); err != nil {
 		_ = s.store.DetachDevice(session.ID, request.NodeID, now)
-		s.logger.Errorf("tailscale", "启用设备精确路由失败: nodeRef=%s error=%v", diagnosticIdentifier(request.NodeID), err)
+		s.logger.Errorf("tailscale", "启用设备精确路由失败: nodeRef=%s error=%s", diagnosticIdentifier(request.NodeID), safeDiagnosticError(err))
 		code, message := tailscaleFailure(err, "启用会话路由失败")
 		writeError(w, http.StatusBadGateway, code, message)
 		return
@@ -755,7 +779,8 @@ func (s *Service) handleSessionSync(w http.ResponseWriter, r *http.Request, sess
 		writeError(w, http.StatusConflict, "config_revision_invalid", "客户端配置 revision 无效")
 		return
 	}
-	if len(request.ClientVersion) > 128 || strings.ContainsAny(request.ClientVersion, "\r\n\x00") ||
+	if strings.TrimSpace(request.ClientVersion) == "" || len(request.ClientVersion) > 128 ||
+		strings.ContainsAny(request.ClientVersion, "\r\n\x00") ||
 		!validCapabilities(request.ClientCapabilities) {
 		writeError(w, http.StatusBadRequest, "client_metadata_invalid", "客户端版本或能力列表无效")
 		return
@@ -820,18 +845,37 @@ func (s *Service) syncDeadline(session Session, now time.Time) time.Time {
 }
 
 func (s *Service) stopSession(w http.ResponseWriter, ctx context.Context, id string) {
-	_, ok, err := s.store.BeginCleanup(id, time.Now(), true, "client_stop")
+	session, ok, err := s.store.BeginCleanupWithLease(
+		id, time.Now(), true, "client_stop", s.cleanupLeaseTTL(),
+	)
 	if err != nil {
-		s.logger.Errorf("cleanup", "开始清理会话失败: sessionRef=%s error=%v", diagnosticIdentifier(id), err)
+		s.logger.Errorf("cleanup", "开始清理会话失败: sessionRef=%s error=%s", diagnosticIdentifier(id), safeDiagnosticError(err))
 		writeError(w, http.StatusInternalServerError, "session_cleanup_start_failed", "开始清理会话失败")
 		return
 	}
 	if !ok {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "already-stopped"})
+		if session.Status == SessionStopped {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "already-stopped"})
+			return
+		}
+		if session.Status == SessionCleaning {
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "cleaning"})
+			return
+		}
+		writeError(w, http.StatusConflict, "session_state_conflict", "会话当前不能开始清理")
 		return
 	}
 	s.events.publishState("session_cleanup_started")
-	err = s.cleanupSession(ctx, id)
+	err = s.cleanupSessionClaim(ctx, session)
+	if errors.Is(err, ErrStaleCleanupClaim) {
+		current, found, readErr := s.store.GetSession(id)
+		if readErr == nil && found && current.Status == SessionStopped {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "already-stopped"})
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "cleaning"})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "session_cleanup_failed", "清理 Tailscale 节点失败，请稍后重试")
 		return
@@ -847,34 +891,73 @@ func (s *Service) cleanupSession(ctx context.Context, id string) error {
 	if !ok {
 		return nil
 	}
-	var cleanupErr error
+	if session.Status == SessionStopped {
+		return nil
+	}
+	if session.Status == SessionCleaning && session.CleanupGeneration > 0 &&
+		!session.CleanupLeaseUntil.IsZero() && time.Now().Before(session.CleanupLeaseUntil) {
+		return ErrStaleCleanupClaim
+	}
+	if session.Status != SessionCleaning || session.CleanupGeneration <= 0 ||
+		session.CleanupLeaseUntil.IsZero() || !time.Now().Before(session.CleanupLeaseUntil) {
+		claimed, claimedOK, claimErr := s.store.BeginCleanupWithLease(
+			id, time.Now(), true, session.StopReason, s.cleanupLeaseTTL(),
+		)
+		if claimErr != nil {
+			return claimErr
+		}
+		if !claimedOK {
+			return ErrStaleCleanupClaim
+		}
+		session = claimed
+	}
+	return s.cleanupSessionClaim(ctx, session)
+}
+
+func (s *Service) cleanupSessionClaim(ctx context.Context, session Session) error {
+	var failures []string
+	addFailure := func(stage string, err error) {
+		if err == nil || isHTTPStatus(err, http.StatusNotFound) {
+			return
+		}
+		var apiErr *HTTPError
+		if errors.As(err, &apiErr) {
+			failures = append(failures, fmt.Sprintf("%s (HTTP %d)", stage, apiErr.StatusCode))
+			return
+		}
+		failures = append(failures, stage)
+	}
+
 	accessToken, credentialErr := s.credentialToken(ctx, session.CredentialID)
 	if credentialErr != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("读取 Tailscale 凭据: %w", credentialErr))
+		addFailure("读取 Tailscale 凭据", credentialErr)
 	}
 	if credentialErr == nil && session.DeviceID != "" {
-		if err := s.tailscale.SetDeviceRoutes(ctx, accessToken, session.DeviceID, []string{}); err != nil {
-			// Android may have logged out before the server cleanup reaches
-			// the control plane, so a missing node is idempotent success.
-			if !isHTTPStatus(err, http.StatusNotFound) {
-				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("撤销设备路由: %w", err))
-			}
-		}
-		if err := s.tailscale.DeleteDevice(ctx, accessToken, session.DeviceID); err != nil {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("删除受管设备: %w", err))
-		}
+		addFailure("撤销设备路由", s.tailscale.SetDeviceRoutes(ctx, accessToken, session.DeviceID, []string{}))
+		addFailure("删除受管设备", s.tailscale.DeleteDevice(ctx, accessToken, session.DeviceID))
 	}
 	if credentialErr == nil {
-		if err := s.tailscale.DeleteAuthKey(ctx, accessToken, session.AuthKeyID); err != nil && !isHTTPStatus(err, http.StatusNotFound) {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("撤销 auth key: %w", err))
+		addFailure("撤销 auth key", s.tailscale.DeleteAuthKey(ctx, accessToken, session.AuthKeyID))
+	}
+
+	var cleanupErr error
+	if len(failures) != 0 {
+		cleanupErr = newCleanupSummaryError(strings.Join(failures, "; "))
+	}
+	finished, finishErr := s.store.FinishCleanupClaim(
+		session.ID, session.CleanupGeneration, time.Now(), cleanupErr,
+	)
+	if finishErr != nil {
+		if errors.Is(finishErr, ErrStaleCleanupClaim) {
+			return finishErr
 		}
+		return errors.Join(cleanupErr, errors.New("保存清理状态失败"))
 	}
-	if err := s.store.FinishCleanup(id, time.Now(), cleanupErr); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("保存清理状态: %w", err))
+	if finished {
+		s.events.publishState("session_cleanup_finished")
 	}
-	s.events.publishState("session_cleanup_finished")
 	if cleanupErr == nil {
-		_ = s.store.DeleteSessionStartReplay(id)
+		_ = s.store.DeleteSessionStartReplay(session.ID)
 	}
 	return cleanupErr
 }
@@ -887,20 +970,30 @@ func isHTTPStatus(err error, status int) bool {
 func (s *Service) ReapOnce(ctx context.Context, now time.Time) {
 	sessions, err := s.store.ReapableSessions(now)
 	if err != nil {
-		s.logger.Errorf("cleanup", "读取待清理会话失败: %v", err)
+		s.logger.Errorf("cleanup", "读取待清理会话失败: error=%s", safeDiagnosticError(err))
 		return
 	}
 	for _, session := range sessions {
-		if _, ok, err := s.store.BeginCleanup(session.ID, now, false, ""); err != nil {
-			s.logger.Errorf("cleanup", "锁定待清理会话失败: sessionRef=%s error=%v", diagnosticIdentifier(session.ID), err)
+		claimed, ok, err := s.store.BeginCleanupWithLease(
+			session.ID, now, false, "", s.cleanupLeaseTTL(),
+		)
+		if err != nil {
+			s.logger.Errorf("cleanup", "锁定待清理会话失败: sessionRef=%s error=%s", diagnosticIdentifier(session.ID), safeDiagnosticError(err))
 			continue
 		} else if !ok {
 			continue
 		}
-		if err := s.cleanupSession(ctx, session.ID); err != nil {
-			s.logger.Errorf("cleanup", "会话自动清理失败: sessionRef=%s error=%v", diagnosticIdentifier(session.ID), err)
+		if err := s.cleanupSessionClaim(ctx, claimed); err != nil {
+			s.logger.Errorf("cleanup", "会话自动清理失败: sessionRef=%s error=%s", diagnosticIdentifier(session.ID), safeDiagnosticError(err))
 		}
 	}
+}
+
+func (s *Service) cleanupLeaseTTL() time.Duration {
+	if s.config.SyncLeaseTTL > 0 {
+		return s.config.SyncLeaseTTL
+	}
+	return defaultCleanupLeaseTTL
 }
 
 func (s *Service) allowRate(w http.ResponseWriter, key string, max int, interval time.Duration) bool {
@@ -1006,6 +1099,21 @@ func tailscaleFailure(err error, fallback string) (string, string) {
 		}
 	}
 	return "tailscale_unavailable", fallback
+}
+
+func safeDiagnosticError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var apiErr *HTTPError
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("HTTP %d", apiErr.StatusCode)
+	}
+	var summary cleanupSummaryError
+	if errors.As(err, &summary) && strings.TrimSpace(summary.value) != "" {
+		return summary.value
+	}
+	return fmt.Sprintf("%T", err)
 }
 
 func publicSession(session Session) map[string]any {

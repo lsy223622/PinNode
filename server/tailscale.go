@@ -91,7 +91,6 @@ func (c *TailscaleClient) ExchangeOAuthToken(ctx context.Context, clientID, clie
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
 		"scope":         {"auth_keys devices:core devices:routes"},
-		"tags":          {managedDeviceTag},
 	}
 	req, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, c.apiURL("oauth", "token"), strings.NewReader(form.Encode()),

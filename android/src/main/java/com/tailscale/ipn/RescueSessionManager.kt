@@ -39,7 +39,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -178,6 +177,11 @@ private fun Tailcfg.Node.hasTailscaleAddress(address: String): Boolean =
 private fun Tailcfg.Node.rescueDisplayName(): String =
     displayName.ifBlank { primaryIPv4Address ?: primaryIPv6Address ?: StableID }
 
+internal fun upsertPendingCleanupSessionIDs(
+    existing: List<String>,
+    sessionID: String
+): List<String> = existing.filterNot { it == sessionID } + sessionID
+
 /**
  * 协调 PIN 兑换、临时登录、LocalAPI 路由广告和服务端清理。
  *
@@ -197,6 +201,11 @@ class RescueSessionManager(private val app: App) {
     const val SESSION_SYNC_FEATURE = "session-sync-v1"
     const val CLIENT_STATE_FEATURE = "client-state-report-v1"
     const val CLIENT_LOG_FEATURE = "client-logs-v1"
+    const val POLICY_FEATURE = "session-policy-capabilities-v1"
+    const val RESCUE_ROUTING_CAPABILITY = "rescue-routing-v1"
+    const val ROUTE_ADVERTISEMENT_CAPABILITY = "route-advertisement-v1"
+    const val EXIT_NODE_CAPABILITY = "exit-node-v1"
+    const val ADVANCED_PREFS_CAPABILITY = "advanced-prefs-v1"
     const val CLIENT_LOG_BATCH_SIZE = 8
 
     fun netfilterModeValue(value: String): Int? =
@@ -214,6 +223,9 @@ class RescueSessionManager(private val app: App) {
       val code: String,
       val gatewayRoute: String = "",
       val wifiSubnetRoute: String = "",
+      val protocolVersion: Int,
+      val clientVersion: String,
+      val clientCapabilities: List<String>,
   )
 
   @Serializable
@@ -332,6 +344,8 @@ class RescueSessionManager(private val app: App) {
       val desiredConfig: SessionConfigSnapshot?,
   )
 
+  @Serializable private data class StopResponse(val status: String)
+
   @Serializable
   private data class ApiErrorBody(
       val code: String = "",
@@ -367,7 +381,7 @@ class RescueSessionManager(private val app: App) {
   private val json = Json { ignoreUnknownKeys = true }
   private val configPrefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
   private val sessionPrefs = app.getEncryptedPrefs()
-  private var activeSession: ActiveSession? = null
+  @Volatile private var activeSession: ActiveSession? = null
   private var timedExitJob: Job? = null
   private var syncJob: Job? = null
   private var sessionStateJob: Job? = null
@@ -432,7 +446,15 @@ class RescueSessionManager(private val app: App) {
 
         val previousNodeID = Notifier.netmap.value?.SelfNode?.StableID
         var pending: ActiveSession? = null
-        val startRequest = StartRequest(code, route, wifiSubnetRoute)
+        val startRequest =
+            StartRequest(
+                code = code,
+                gatewayRoute = route,
+                wifiSubnetRoute = wifiSubnetRoute,
+                protocolVersion = PROTOCOL_VERSION,
+                clientVersion = BuildConfig.VERSION_NAME,
+                clientCapabilities = supportedClientCapabilities(),
+            )
         val pendingStart = pendingSessionStart(startRequest, serverUrl)
         try {
           validateApiCompatibility(getJson<ApiMeta>("v1/meta", null, serverUrl))
@@ -511,26 +533,55 @@ class RescueSessionManager(private val app: App) {
     stopClientTelemetry()
   }
 
-  fun shouldExitOnAppClose(): Boolean = activeSession?.config?.exitPolicy?.onAppClose == true
+  fun shouldExitOnAppClose(): Boolean =
+      (activeSession ?: loadPersistedActiveSession())?.config?.exitPolicy?.onAppClose == true
 
-  fun exitForAppCloseBlocking() {
+  fun requestLifecycleStopForAppClose() {
     if (!shouldExitOnAppClose()) return
-    runBlocking(Dispatchers.IO) { withTimeoutOrNull(5_000) { exitForAppClose() } }
+    requestLifecycleStop()
   }
 
-  fun onVpnRevokedBlocking() {
-    runBlocking(Dispatchers.IO) { withTimeoutOrNull(5_000) { stop() } }
+  fun requestLifecycleStopForVpnRevoke() {
+    requestLifecycleStop()
+  }
+
+  private fun requestLifecycleStop() {
+    val session = activeSession ?: loadPersistedActiveSession()
+    val persisted = session == null || persistPendingCleanup(session)
+    if (!persisted) {
+      TSLog.e(TAG, "生命周期退出意图持久化失败，保留 active session 记录")
+    } else if (session != null) {
+      activeSession = null
+      clearPersistedSession()
+    }
+    session?.let { clientLogBuffer.discardSession(it.id) }
+    stopClientTelemetry()
+    timedExitJob?.cancel()
+    timedExitJob = null
+    syncJob?.cancel()
+    syncJob = null
+    stopSessionStateMonitor()
+    runCatching {
+          app.setRescueRoutes(null)
+          app.setRescueMode(false)
+        }
+        .onFailure { TSLog.e(TAG, "生命周期退出时停用本地救援网络失败: ${it::class.simpleName}") }
+    _sessionState.value = RescueSessionState()
+    if (persisted) {
+      app.applicationScope.launch { retryPendingCleanup() }
+    }
   }
 
   suspend fun exitForAppClose() {
     mutex.withLock {
-      val session = activeSession ?: return@withLock
+      val session = activeSession ?: loadPersistedActiveSession() ?: return@withLock
       if (!session.config.exitPolicy.onAppClose) return@withLock
 
-      // Persist the terminal state before the first asynchronous cleanup. Some
-      // Android variants kill the process immediately after onTaskRemoved returns.
+      if (!persistPendingCleanup(session)) {
+        TSLog.e(TAG, "应用关闭退出意图持久化失败，保留 active session 记录")
+        return@withLock
+      }
       finishClientTelemetry(session)
-      persistPendingCleanup(session)
       activeSession = null
       timedExitJob?.cancel()
       timedExitJob = null
@@ -549,7 +600,7 @@ class RescueSessionManager(private val app: App) {
   }
 
   private suspend fun stopLocked(): Result<Unit> {
-    val session = activeSession
+    val session = activeSession ?: loadPersistedActiveSession()
     if (session == null) {
       stopClientTelemetry()
       app.setRescueRoutes(null)
@@ -559,8 +610,10 @@ class RescueSessionManager(private val app: App) {
       _sessionState.value = RescueSessionState()
       return Result.success(Unit)
     }
+    if (!persistPendingCleanup(session)) {
+      return Result.failure(IOException("无法持久化会话清理意图"))
+    }
     finishClientTelemetry(session)
-    persistPendingCleanup(session)
     activeSession = null
     timedExitJob?.cancel()
     timedExitJob = null
@@ -590,14 +643,32 @@ class RescueSessionManager(private val app: App) {
 
   private suspend fun stopRemote(session: ActiveSession) {
     try {
-      postEmpty<Unit>(
-          "v1/sessions/${session.id}/stop",
-          session.token,
-          session.serverUrl.ifBlank { configuredServerUrl() },
-      )
+      val response =
+          postEmpty<StopResponse>(
+              "v1/sessions/${session.id}/stop",
+              session.token,
+              session.serverUrl.ifBlank { configuredServerUrl() },
+          )
+      when (response.status) {
+        "stopped",
+        "already-stopped" -> Unit
+        "cleaning" ->
+            throw PinNodeApiException(
+                status = 202,
+                code = "session_cleanup_in_progress",
+                retryable = true,
+                message = "服务端仍在清理会话",
+            )
+        else -> throw PinNodeApiConfigurationException("服务器返回了无效的会话停止状态。")
+      }
     } catch (error: PinNodeApiException) {
       if (error.status !in setOf(404, 410)) throw error
     }
+  }
+
+  private fun loadPersistedActiveSession(): ActiveSession? {
+    val encoded = sessionPrefs.getString(KEY_ACTIVE_SESSION, null) ?: return null
+    return runCatching { json.decodeFromString(ActiveSession.serializer(), encoded) }.getOrNull()
   }
 
   private fun restoreSession() {
@@ -611,7 +682,10 @@ class RescueSessionManager(private val app: App) {
               return
             }
     if (restored.config.exitPolicy.onAppClose) {
-      persistPendingCleanup(restored)
+      if (!persistPendingCleanup(restored)) {
+        TSLog.e(TAG, "恢复时持久化应用关闭清理意图失败，保留 active session 记录")
+        return
+      }
       clearPersistedSession()
       app.setRescueRoutes(null)
       app.setRescueMode(false)
@@ -623,7 +697,10 @@ class RescueSessionManager(private val app: App) {
       return
     }
     if (!restored.attached) {
-      persistPendingCleanup(restored)
+      if (!persistPendingCleanup(restored)) {
+        TSLog.e(TAG, "恢复时持久化未绑定会话清理意图失败，保留 active session 记录")
+        return
+      }
       clearPersistedSession()
       app.setRescueRoutes(null)
       app.setRescueMode(false)
@@ -693,16 +770,26 @@ class RescueSessionManager(private val app: App) {
     sessionPrefs.edit(commit = true) { remove(KEY_PENDING_SESSION_START) }
   }
 
-  private fun persistPendingCleanup(session: ActiveSession) {
-    synchronized(sessionPrefs) {
-      val sessions = loadPendingCleanups().filterNot { it.id == session.id } + session
-      val encoded =
-          json.encodeToString(PendingCleanupQueue.serializer(), PendingCleanupQueue(sessions))
-      sessionPrefs.edit(commit = true) {
-        putString(KEY_PENDING_CLEANUPS, encoded)
-        remove(KEY_PENDING_CLEANUP)
-      }
-    }
+  private fun persistPendingCleanup(session: ActiveSession): Boolean {
+    return runCatching {
+          synchronized(sessionPrefs) {
+            val existing = loadPendingCleanups()
+            val sessionsByID = (existing + session).associateBy { it.id }
+            val sessions =
+                upsertPendingCleanupSessionIDs(existing.map { it.id }, session.id)
+                    .mapNotNull(sessionsByID::get)
+            val encoded =
+                json.encodeToString(PendingCleanupQueue.serializer(), PendingCleanupQueue(sessions))
+            sessionPrefs
+                .edit()
+                .apply {
+                  putString(KEY_PENDING_CLEANUPS, encoded)
+                  remove(KEY_PENDING_CLEANUP)
+                }
+                .commit()
+          }
+        }
+        .getOrDefault(false)
   }
 
   private fun clearPendingCleanup(id: String) {
@@ -944,12 +1031,7 @@ class RescueSessionManager(private val app: App) {
                           protocolVersion = PROTOCOL_VERSION,
                           appliedConfigRevision = current.configRevision,
                           clientVersion = BuildConfig.VERSION_NAME,
-                          clientCapabilities =
-                              listOf(
-                                  SESSION_SYNC_FEATURE,
-                                  CLIENT_STATE_FEATURE,
-                                  CLIENT_LOG_FEATURE,
-                              ),
+                          clientCapabilities = supportedClientCapabilities(),
                           clientState = buildClientStateReport(),
                       ),
                       current.token,
@@ -1257,7 +1339,12 @@ class RescueSessionManager(private val app: App) {
           if (status !in 200..299) {
             throw apiException(connection, status)
           }
-          @Suppress("UNCHECKED_CAST") return@withContext Unit as T
+          if (T::class == Unit::class) {
+            @Suppress("UNCHECKED_CAST") return@withContext Unit as T
+          }
+          connection.inputStream.use { stream ->
+            json.decodeFromString<T>(stream.readBytes().toString(StandardCharsets.UTF_8))
+          }
         } catch (error: Throwable) {
           debugRequest(
               operation,
@@ -1325,10 +1412,22 @@ class RescueSessionManager(private val app: App) {
     if (protocol != PROTOCOL_VERSION ||
         SESSION_SYNC_FEATURE !in features ||
         CLIENT_STATE_FEATURE !in features ||
-        CLIENT_LOG_FEATURE !in features) {
+        CLIENT_LOG_FEATURE !in features ||
+        POLICY_FEATURE !in features) {
       throw PinNodeApiConfigurationException("服务器不支持此客户端所需的会话状态与日志协议。")
     }
   }
+
+  private fun supportedClientCapabilities(): List<String> =
+      listOf(
+          SESSION_SYNC_FEATURE,
+          CLIENT_STATE_FEATURE,
+          CLIENT_LOG_FEATURE,
+          RESCUE_ROUTING_CAPABILITY,
+          ROUTE_ADVERTISEMENT_CAPABILITY,
+          EXIT_NODE_CAPABILITY,
+          ADVANCED_PREFS_CAPABILITY,
+      )
 
   private fun diagnosticOperation(path: String): String =
       when {

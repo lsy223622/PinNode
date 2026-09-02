@@ -134,6 +134,9 @@ func (c SessionConfig) Normalize() (SessionConfig, error) {
 		c.ExitNodeID = ""
 		c.ExitNodeIP = ""
 		c.AutoExitNode = ""
+		if c.ExitNodeAllowLANAccess {
+			return SessionConfig{}, fmt.Errorf("exitNodeAllowLanAccess 只能在启用 Exit Node 时使用")
+		}
 	}
 
 	if c.ExitNodeIP != "" {

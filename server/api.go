@@ -23,6 +23,7 @@ var serverFeatures = []string{
 	"client-state-report-v1",
 	"client-logs-v1",
 	"structured-errors-v1",
+	"session-policy-capabilities-v1",
 }
 
 type apiErrorBody struct {

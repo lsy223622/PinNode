@@ -90,6 +90,8 @@ type Session struct {
 	Status                SessionStatus
 	CleanupErr            string
 	CleanupAfter          time.Time
+	CleanupGeneration     int64
+	CleanupLeaseUntil     time.Time
 	StoppedAt             time.Time
 	StopReason            string
 	ClientStateJSON       string
@@ -105,6 +107,20 @@ type SessionStartReplay struct {
 
 type Store struct {
 	db *sql.DB
+}
+
+const defaultCleanupLeaseTTL = 5 * time.Minute
+
+var ErrStaleCleanupClaim = errors.New("清理 claim 已失效")
+
+type cleanupSummaryError struct {
+	value string
+}
+
+func (e cleanupSummaryError) Error() string { return e.value }
+
+func newCleanupSummaryError(value string) error {
+	return cleanupSummaryError{value: value}
 }
 
 func NewStore() *Store {
@@ -177,6 +193,8 @@ func (s *Store) migrate() error {
 			status TEXT NOT NULL,
 			cleanup_error TEXT NOT NULL DEFAULT '',
 			cleanup_after INTEGER,
+			cleanup_generation INTEGER NOT NULL DEFAULT 0,
+			cleanup_lease_until INTEGER,
 			stopped_at INTEGER,
 			stop_reason TEXT NOT NULL DEFAULT '',
 			client_state_json TEXT NOT NULL DEFAULT '{}',
@@ -258,6 +276,12 @@ func (s *Store) migrate() error {
 	if err := s.ensureColumn("sessions", "client_state_json", "client_state_json TEXT NOT NULL DEFAULT '{}'"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("sessions", "cleanup_generation", "cleanup_generation INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sessions", "cleanup_lease_until", "cleanup_lease_until INTEGER"); err != nil {
+		return err
+	}
 	hasHeartbeatDeadline, err := s.hasColumn("sessions", "heartbeat_deadline")
 	if err != nil {
 		return err
@@ -277,7 +301,7 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("迁移会话清理索引: %w", err)
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS sessions_reap_idx
-		ON sessions(status, provisioning_deadline, expires_at, sync_deadline, cleanup_after)`); err != nil {
+		ON sessions(status, provisioning_deadline, expires_at, sync_deadline, cleanup_after, cleanup_lease_until)`); err != nil {
 		return fmt.Errorf("创建会话清理索引: %w", err)
 	}
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, unixepoch() * 1000)`); err != nil {
@@ -290,6 +314,9 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("记录 SQLite 迁移: %w", err)
 	}
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, unixepoch() * 1000)`); err != nil {
+		return fmt.Errorf("记录 SQLite 迁移: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, unixepoch() * 1000)`); err != nil {
 		return fmt.Errorf("记录 SQLite 迁移: %w", err)
 	}
 	return nil
@@ -810,11 +837,12 @@ func insertSession(execer sqlExecer, session Session) error {
 			id, token_hash, pairing_code_hash, credential_id, auth_key_id, provisioning_name, route, routes_json,
 			wifi_routes_json, config_json, config_revision, applied_config_revision,
 			device_id, connected_at, created_at, provisioning_deadline, expires_at, last_seen_at, sync_deadline,
-			status, cleanup_error, cleanup_after, stopped_at, stop_reason, client_state_json, updated_at
+			status, cleanup_error, cleanup_after, cleanup_generation, cleanup_lease_until,
+			stopped_at, stop_reason, client_state_json, updated_at
 		) VALUES (
 			?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?,
 			?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?
+			?, ?, ?, ?, ?, ?, ?, ?, ?
 		)`,
 		session.ID, session.TokenHash, session.PairingCodeHash, session.CredentialID, session.AuthKeyID,
 		session.ProvisioningName, session.Route, routes, wifiRoutes, config, session.ConfigRevision,
@@ -822,7 +850,8 @@ func insertSession(execer sqlExecer, session Session) error {
 		toMillis(session.CreatedAt), nullableMillis(session.ProvisioningDeadline),
 		nullableMillis(session.ExpiresAt), nullableMillis(session.LastSeenAt),
 		nullableMillis(session.SyncDeadline), session.Status, session.CleanupErr,
-		nullableMillis(session.CleanupAfter), nullableMillis(session.StoppedAt),
+		nullableMillis(session.CleanupAfter), session.CleanupGeneration,
+		nullableMillis(session.CleanupLeaseUntil), nullableMillis(session.StoppedAt),
 		session.StopReason, clientState, toMillis(session.UpdatedAt),
 	)
 	if err != nil {
@@ -913,6 +942,9 @@ func (s *Store) SyncSessionWithState(
 	appliedRevision int64,
 	clientStateJSON string,
 ) (bool, error) {
+	if appliedRevision < 0 {
+		return false, errors.New("客户端配置 revision 不能为负数")
+	}
 	clientStateJSON = strings.TrimSpace(clientStateJSON)
 	if clientStateJSON == "" {
 		clientStateJSON = "{}"
@@ -922,9 +954,15 @@ func (s *Store) SyncSessionWithState(
 	}
 	result, err := s.db.Exec(
 		`UPDATE sessions
-		 SET last_seen_at = ?, sync_deadline = ?, applied_config_revision = ?, client_state_json = ?, updated_at = ?
+		 SET last_seen_at = ?, sync_deadline = ?,
+		     applied_config_revision = CASE
+		         WHEN applied_config_revision < ? THEN ?
+		         ELSE applied_config_revision
+		     END,
+		     client_state_json = ?, updated_at = ?
 		 WHERE id = ? AND status = ? AND config_revision >= ?`,
-		toMillis(now), nullableMillis(deadline), appliedRevision, clientStateJSON, toMillis(now),
+		toMillis(now), nullableMillis(deadline), appliedRevision, appliedRevision,
+		clientStateJSON, toMillis(now),
 		id, SessionActive, appliedRevision,
 	)
 	if err != nil {
@@ -935,6 +973,19 @@ func (s *Store) SyncSessionWithState(
 }
 
 func (s *Store) BeginCleanup(id string, now time.Time, force bool, reason string) (Session, bool, error) {
+	return s.BeginCleanupWithLease(id, now, force, reason, defaultCleanupLeaseTTL)
+}
+
+func (s *Store) BeginCleanupWithLease(
+	id string,
+	now time.Time,
+	force bool,
+	reason string,
+	leaseTTL time.Duration,
+) (Session, bool, error) {
+	if leaseTTL <= 0 {
+		leaseTTL = defaultCleanupLeaseTTL
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Session{}, false, err
@@ -947,52 +998,112 @@ func (s *Store) BeginCleanup(id string, now time.Time, force bool, reason string
 	if err != nil {
 		return Session{}, false, err
 	}
-	if session.Status == SessionStopped || session.Status == SessionCleaning {
-		return Session{}, false, nil
+	if session.Status == SessionStopped {
+		return session, false, nil
 	}
-	if !force && !session.reapable(now) {
+	if session.Status == SessionCleaning {
+		if !session.CleanupLeaseUntil.IsZero() && now.Before(session.CleanupLeaseUntil) {
+			return session, false, nil
+		}
+	} else if !force && !session.reapable(now) {
 		return Session{}, false, nil
 	}
 	if reason == "" {
-		reason = session.reapReason(now)
+		reason = session.StopReason
+		if reason == "" {
+			reason = session.reapReason(now)
+		}
 	}
+	nextGeneration := session.CleanupGeneration + 1
+	if nextGeneration <= 0 {
+		nextGeneration = 1
+	}
+	leaseUntil := now.Add(leaseTTL)
 	result, err := tx.Exec(
 		`UPDATE sessions SET status = ?, cleanup_error = '', cleanup_after = NULL,
-		 stop_reason = ?, updated_at = ? WHERE id = ? AND status = ?`,
-		SessionCleaning, reason, toMillis(now), id, session.Status,
+			 cleanup_generation = ?, cleanup_lease_until = ?, stop_reason = ?, updated_at = ?
+		 WHERE id = ? AND status = ?
+		   AND (status <> ? OR cleanup_lease_until IS NULL OR cleanup_lease_until <= ?)`,
+		SessionCleaning, nextGeneration, toMillis(leaseUntil), reason, toMillis(now),
+		id, session.Status, SessionCleaning, toMillis(now),
 	)
 	if err != nil {
 		return Session{}, false, err
 	}
 	count, err := result.RowsAffected()
-	if err != nil || count != 1 {
+	if err != nil {
 		return Session{}, false, err
+	}
+	if count != 1 {
+		_ = tx.Rollback()
+		current, found, readErr := s.GetSession(id)
+		if readErr != nil || !found {
+			return current, false, readErr
+		}
+		return current, false, nil
 	}
 	if err := tx.Commit(); err != nil {
 		return Session{}, false, err
 	}
 	session.Status = SessionCleaning
 	session.StopReason = reason
+	session.CleanupErr = ""
+	session.CleanupAfter = time.Time{}
+	session.CleanupGeneration = nextGeneration
+	session.CleanupLeaseUntil = leaseUntil
 	session.UpdatedAt = now
 	return session, true, nil
 }
 
-func (s *Store) FinishCleanup(id string, now time.Time, cleanupErr error) error {
-	if cleanupErr == nil {
-		_, err := s.db.Exec(
-			`UPDATE sessions SET status = ?, cleanup_error = '', cleanup_after = NULL,
-			 stopped_at = ?, updated_at = ? WHERE id = ?`,
-			SessionStopped, toMillis(now), toMillis(now), id,
-		)
-		return err
+func (s *Store) FinishCleanupClaim(
+	id string,
+	generation int64,
+	now time.Time,
+	cleanupErr error,
+) (bool, error) {
+	if generation <= 0 {
+		return false, ErrStaleCleanupClaim
 	}
-	_, err := s.db.Exec(
+	if cleanupErr == nil {
+		result, err := s.db.Exec(
+			`UPDATE sessions SET status = ?, cleanup_error = '', cleanup_after = NULL,
+				 cleanup_lease_until = NULL, stopped_at = ?, updated_at = ?
+			 WHERE id = ? AND status = ? AND cleanup_generation = ?
+			   AND cleanup_lease_until IS NOT NULL AND cleanup_lease_until > ?`,
+			SessionStopped, toMillis(now), toMillis(now), id, SessionCleaning,
+			generation, toMillis(now),
+		)
+		if err != nil {
+			return false, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		if count != 1 {
+			return false, ErrStaleCleanupClaim
+		}
+		return true, nil
+	}
+	result, err := s.db.Exec(
 		`UPDATE sessions SET status = ?, cleanup_error = ?, cleanup_after = ?,
-		 updated_at = ? WHERE id = ?`,
-		SessionCleanupFailed, cleanupErr.Error(), toMillis(now.Add(30*time.Second)),
-		toMillis(now), id,
+		 cleanup_lease_until = NULL, updated_at = ?
+		 WHERE id = ? AND status = ? AND cleanup_generation = ?
+		   AND cleanup_lease_until IS NOT NULL AND cleanup_lease_until > ?`,
+		SessionCleanupFailed, sanitizeCleanupError(cleanupErr), toMillis(now.Add(30*time.Second)),
+		toMillis(now), id, SessionCleaning, generation, toMillis(now),
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if count != 1 {
+		return false, ErrStaleCleanupClaim
+	}
+	return true, nil
 }
 
 func (s *Store) ReapableSessions(now time.Time) ([]Session, error) {
@@ -1003,11 +1114,12 @@ func (s *Store) ReapableSessions(now time.Time) ([]Session, error) {
 		     (expires_at IS NOT NULL AND expires_at <= ?)
 			     OR (sync_deadline IS NOT NULL AND sync_deadline <= ?
 		         AND COALESCE(json_extract(config_json, '$.exitPolicy.onAppClose'), 0) = 1)
-		 ))
-		 OR (status = ? AND (cleanup_after IS NULL OR cleanup_after <= ?))
+			  ))
+			 OR (status = ? AND (cleanup_after IS NULL OR cleanup_after <= ?))
+			 OR (status = ? AND (cleanup_lease_until IS NULL OR cleanup_lease_until <= ?))
 		 ORDER BY updated_at ASC`,
 		SessionProvisioning, toMillis(now), SessionActive, toMillis(now), toMillis(now),
-		SessionCleanupFailed, toMillis(now),
+		SessionCleanupFailed, toMillis(now), SessionCleaning, toMillis(now),
 	)
 	if err != nil {
 		return nil, err
@@ -1068,7 +1180,8 @@ const sessionSelect = `SELECT
 	id, token_hash, COALESCE(pairing_code_hash, ''), COALESCE(credential_id, ''), auth_key_id, provisioning_name, route, routes_json,
 	wifi_routes_json, config_json, config_revision, applied_config_revision,
 	COALESCE(device_id, ''), connected_at, created_at, provisioning_deadline, expires_at, last_seen_at, sync_deadline,
-	status, cleanup_error, cleanup_after, stopped_at, stop_reason, client_state_json, updated_at
+	status, cleanup_error, cleanup_after, cleanup_generation, cleanup_lease_until,
+	stopped_at, stop_reason, client_state_json, updated_at
 	FROM sessions`
 
 type rowScanner interface {
@@ -1079,7 +1192,7 @@ func scanSession(scanner rowScanner) (Session, error) {
 	var session Session
 	var routes, wifiRoutes, config string
 	var provisioningDeadline, expiresAt, lastSeenAt, syncDeadline sql.NullInt64
-	var connectedAt, cleanupAfter, stoppedAt sql.NullInt64
+	var connectedAt, cleanupAfter, cleanupLeaseUntil, stoppedAt sql.NullInt64
 	var clientState string
 	var createdAt, updatedAt int64
 	err := scanner.Scan(
@@ -1087,7 +1200,8 @@ func scanSession(scanner rowScanner) (Session, error) {
 		&session.Route, &routes, &wifiRoutes, &config, &session.ConfigRevision,
 		&session.AppliedConfigRevision, &session.DeviceID, &connectedAt, &createdAt,
 		&provisioningDeadline, &expiresAt, &lastSeenAt, &syncDeadline,
-		&session.Status, &session.CleanupErr, &cleanupAfter, &stoppedAt,
+		&session.Status, &session.CleanupErr, &cleanupAfter, &session.CleanupGeneration,
+		&cleanupLeaseUntil, &stoppedAt,
 		&session.StopReason, &clientState, &updatedAt,
 	)
 	if err != nil {
@@ -1112,6 +1226,7 @@ func scanSession(scanner rowScanner) (Session, error) {
 	session.LastSeenAt = fromNullableMillis(lastSeenAt)
 	session.SyncDeadline = fromNullableMillis(syncDeadline)
 	session.CleanupAfter = fromNullableMillis(cleanupAfter)
+	session.CleanupLeaseUntil = fromNullableMillis(cleanupLeaseUntil)
 	session.StoppedAt = fromNullableMillis(stoppedAt)
 	if strings.TrimSpace(clientState) == "" || !json.Valid([]byte(clientState)) {
 		clientState = "{}"
@@ -1147,6 +1262,8 @@ func (s Session) reapable(now time.Time) bool {
 				!now.Before(s.SyncDeadline))
 	case SessionCleanupFailed:
 		return s.CleanupAfter.IsZero() || !now.Before(s.CleanupAfter)
+	case SessionCleaning:
+		return s.CleanupLeaseUntil.IsZero() || !now.Before(s.CleanupLeaseUntil)
 	default:
 		return false
 	}
@@ -1157,12 +1274,36 @@ func (s Session) reapReason(now time.Time) string {
 		return "provisioning_timeout"
 	}
 	if s.Status == SessionCleanupFailed {
-		return s.StopReason
+		if s.StopReason != "" {
+			return s.StopReason
+		}
+		return "cleanup_retry"
+	}
+	if s.Status == SessionCleaning {
+		return "cleanup_recovery"
 	}
 	if !s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt) {
 		return "expired"
 	}
 	return "sync_timeout"
+}
+
+func sanitizeCleanupError(err error) string {
+	var summary cleanupSummaryError
+	if errors.As(err, &summary) {
+		value := strings.TrimSpace(summary.value)
+		if value != "" {
+			if len(value) > 512 {
+				return value[:512]
+			}
+			return value
+		}
+	}
+	var apiErr *HTTPError
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("Tailscale API HTTP %d", apiErr.StatusCode)
+	}
+	return "cleanup failed"
 }
 
 func cloneSessionConfig(config SessionConfig) SessionConfig {

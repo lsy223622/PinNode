@@ -101,7 +101,12 @@ class MainActivity : ComponentActivity() {
 
   override fun onDestroy() {
     if (isFinishing) {
-      App.get().getRescueSessionManager().exitForAppCloseBlocking()
+      val app = App.get()
+      val sessionManager = app.getRescueSessionManager()
+      if (sessionManager.shouldExitOnAppClose()) {
+        sessionManager.requestLifecycleStopForAppClose()
+        app.stopVPN()
+      }
     }
     super.onDestroy()
   }

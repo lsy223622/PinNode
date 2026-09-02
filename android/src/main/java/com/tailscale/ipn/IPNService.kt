@@ -122,7 +122,7 @@ open class IPNService : VpnService(), libtailscale.IPNService {
 
   override fun onTaskRemoved(rootIntent: Intent?) {
     if (app.getRescueSessionManager().shouldExitOnAppClose()) {
-      app.getRescueSessionManager().exitForAppCloseBlocking()
+      app.getRescueSessionManager().requestLifecycleStopForAppClose()
       close()
     }
     super.onTaskRemoved(rootIntent)
@@ -130,7 +130,7 @@ open class IPNService : VpnService(), libtailscale.IPNService {
 
   override fun onRevoke() {
     // VPN permission was granted to another app, so stop the current session.
-    app.getRescueSessionManager().onVpnRevokedBlocking()
+    app.getRescueSessionManager().requestLifecycleStopForVpnRevoke()
     app.setWantRunning(false)
     close()
     super.onRevoke()

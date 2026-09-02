@@ -19,6 +19,7 @@ type fakeTailscale struct {
 	ipCalls            map[string]int
 	routes             map[string][]string
 	routeCalls         map[string]int
+	routeAttempts      map[string]int
 	deleted            []string
 	deletedAuthKeys    []string
 	ephemeralRequested []bool
@@ -29,6 +30,9 @@ type fakeTailscale struct {
 	oauthErr           error
 	createAuthKeyErr   error
 	setDeviceIPv4Err   error
+	setDeviceRoutesErr error
+	deleteDeviceErr    error
+	deleteAuthKeyErr   error
 }
 
 func fakeTailscaleKey(parts ...string) string {
@@ -68,7 +72,7 @@ func (f *fakeTailscale) DeleteAuthKey(_ context.Context, _ string, id string) er
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedAuthKeys = append(f.deletedAuthKeys, id)
-	return nil
+	return f.deleteAuthKeyErr
 }
 
 func (f *fakeTailscale) GetDevice(context.Context, string, string) (Device, error) {
@@ -98,6 +102,13 @@ func (f *fakeTailscale) SetDeviceIPv4(_ context.Context, _ string, id, ipv4 stri
 func (f *fakeTailscale) SetDeviceRoutes(_ context.Context, _ string, id string, routes []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.routeAttempts == nil {
+		f.routeAttempts = make(map[string]int)
+	}
+	f.routeAttempts[id]++
+	if f.setDeviceRoutesErr != nil {
+		return f.setDeviceRoutesErr
+	}
 	if f.routes == nil {
 		f.routes = make(map[string][]string)
 	}
@@ -113,7 +124,7 @@ func (f *fakeTailscale) DeleteDevice(_ context.Context, _ string, id string) err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, id)
-	return nil
+	return f.deleteDeviceErr
 }
 
 type testAdminAuthentication struct {
@@ -183,6 +194,27 @@ func newJSONRequest(method, target, body string) *http.Request {
 }
 
 func newSessionStartRequest(body string) *http.Request {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err == nil {
+		if _, ok := payload["protocolVersion"]; !ok {
+			payload["protocolVersion"] = protocolVersion
+		}
+		if _, ok := payload["clientVersion"]; !ok {
+			payload["clientVersion"] = "test"
+		}
+		if _, ok := payload["clientCapabilities"]; !ok {
+			payload["clientCapabilities"] = []string{
+				clientCapabilitySessionSync,
+				clientCapabilityRescueRouting,
+				clientCapabilityExitNode,
+				clientCapabilityAdvancedPrefs,
+				"route-advertisement-v1",
+			}
+		}
+		if encoded, marshalErr := json.Marshal(payload); marshalErr == nil {
+			body = string(encoded)
+		}
+	}
 	request := newJSONRequest(http.MethodPost, "/v1/sessions", body)
 	request.Header.Set("Idempotency-Key", "unit-test-session-start-key")
 	return request
@@ -294,6 +326,178 @@ func TestSessionProvisionAndCleanup(t *testing.T) {
 	}
 	if len(fake.deleted) != 1 || fake.deleted[0] != "n-test" {
 		t.Fatalf("删除设备调用异常: %v", fake.deleted)
+	}
+}
+
+func TestStopReportsCleaningWhenAnotherWorkerOwnsLease(t *testing.T) {
+	fake := &fakeTailscale{}
+	store := NewStore()
+	service := NewService(testServiceConfig(), store, fake, nil)
+	_, credentialID := installTestAdminAndCredential(t, service, store)
+	token, tokenHash, err := newSecretToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := store.PutSession(Session{
+		ID: "already-cleaning", TokenHash: tokenHash, CredentialID: credentialID, AuthKeyID: "key-cleaning",
+		ProvisioningName: "pinnode-already-cleaning", DeviceID: "node-cleaning", Status: SessionCleaning,
+		CleanupGeneration: 4, CleanupLeaseUntil: now.Add(time.Minute), CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/sessions/already-cleaning/stop", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || response.Body.String() != "{\"status\":\"cleaning\"}\n" {
+		t.Fatalf("有效清理租约被错误报告为已停止: %d %s", response.Code, response.Body.String())
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.deleted) != 0 || len(fake.deletedAuthKeys) != 0 {
+		t.Fatalf("清理中请求不应启动第二个 worker: devices=%v keys=%v", fake.deleted, fake.deletedAuthKeys)
+	}
+}
+
+func TestReaperRecoversExpiredCleaningAndTreatsNotFoundAsSuccess(t *testing.T) {
+	fake := &fakeTailscale{
+		setDeviceRoutesErr: &HTTPError{StatusCode: http.StatusNotFound},
+		deleteDeviceErr:    &HTTPError{StatusCode: http.StatusNotFound},
+		deleteAuthKeyErr:   &HTTPError{StatusCode: http.StatusNotFound},
+	}
+	store := NewStore()
+	service := NewService(testServiceConfig(), store, fake, nil)
+	_, credentialID := installTestAdminAndCredential(t, service, store)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := store.PutSession(Session{
+		ID: "expired-cleaning", CredentialID: credentialID, AuthKeyID: "key-expired-cleaning",
+		ProvisioningName: "pinnode-expired-cleaning", DeviceID: "node-expired-cleaning",
+		Status: SessionCleaning, CleanupGeneration: 1, CleanupLeaseUntil: now.Add(-time.Minute),
+		CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service.ReapOnce(t.Context(), now)
+	finished, ok, err := store.GetSession("expired-cleaning")
+	if err != nil || !ok || finished.Status != SessionStopped || finished.CleanupGeneration != 2 {
+		t.Fatalf("reaper 未恢复过期 cleaning: session=%+v ok=%v err=%v", finished, ok, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.routeAttempts["node-expired-cleaning"] != 1 || fake.routeCalls["node-expired-cleaning"] != 0 ||
+		len(fake.deleted) != 1 || len(fake.deletedAuthKeys) != 1 {
+		t.Fatalf("404 幂等清理调用记录错误: attempts=%v routes=%v devices=%v keys=%v", fake.routeAttempts, fake.routeCalls, fake.deleted, fake.deletedAuthKeys)
+	}
+}
+
+func TestCleanupFailureRetriesAllIdempotentStages(t *testing.T) {
+	for _, stage := range []string{"route", "device", "auth-key"} {
+		t.Run(stage, func(t *testing.T) {
+			fake := &fakeTailscale{}
+			switch stage {
+			case "route":
+				fake.setDeviceRoutesErr = errors.New("route unavailable")
+			case "device":
+				fake.deleteDeviceErr = errors.New("device unavailable")
+			case "auth-key":
+				fake.deleteAuthKeyErr = errors.New("auth key unavailable")
+			}
+			store := NewStore()
+			defer store.Close()
+			service := NewService(testServiceConfig(), store, fake, nil)
+			_, credentialID := installTestAdminAndCredential(t, service, store)
+			now := time.Now().UTC().Truncate(time.Millisecond)
+			if err := store.PutSession(Session{
+				ID: "partial-cleanup-" + stage, CredentialID: credentialID, AuthKeyID: "key-partial-" + stage,
+				ProvisioningName: "pinnode-partial-" + stage, DeviceID: "node-partial-" + stage,
+				Status: SessionActive, ExpiresAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			service.ReapOnce(t.Context(), now)
+			failed, ok, err := store.GetSession("partial-cleanup-" + stage)
+			if err != nil || !ok || failed.Status != SessionCleanupFailed || failed.CleanupAfter.IsZero() {
+				t.Fatalf("部分清理失败未留下可重试状态: session=%+v ok=%v err=%v", failed, ok, err)
+			}
+			fake.mu.Lock()
+			firstRouteAttempts := fake.routeAttempts["node-partial-"+stage]
+			firstDeletedDevices := len(fake.deleted)
+			firstDeletedKeys := len(fake.deletedAuthKeys)
+			fake.setDeviceRoutesErr = nil
+			fake.deleteDeviceErr = nil
+			fake.deleteAuthKeyErr = nil
+			fake.mu.Unlock()
+			if firstRouteAttempts != 1 || firstDeletedDevices != 1 || firstDeletedKeys != 1 {
+				t.Fatalf("部分失败后未继续执行后续清理阶段: routeAttempts=%d devices=%d keys=%d", firstRouteAttempts, firstDeletedDevices, firstDeletedKeys)
+			}
+			service.ReapOnce(t.Context(), now.Add(time.Minute))
+			finished, ok, err := store.GetSession("partial-cleanup-" + stage)
+			if err != nil || !ok || finished.Status != SessionStopped {
+				t.Fatalf("清理失败重试未完成: session=%+v ok=%v err=%v", finished, ok, err)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if fake.routeAttempts["node-partial-"+stage] != 2 || len(fake.deleted) != 2 || len(fake.deletedAuthKeys) != 2 {
+				t.Fatalf("重试没有重新执行全部幂等阶段: attempts=%v devices=%v keys=%v", fake.routeAttempts, fake.deleted, fake.deletedAuthKeys)
+			}
+		})
+	}
+}
+
+func TestCleanupCredentialFailureRemainsRetryable(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+	service := NewService(testServiceConfig(), store, &fakeTailscale{}, nil)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := store.PutSession(Session{
+		ID: "unreadable-credential", CredentialID: "missing-credential", AuthKeyID: "key-missing",
+		ProvisioningName: "pinnode-unreadable-credential", Status: SessionActive,
+		ExpiresAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	service.ReapOnce(t.Context(), now)
+	failed, ok, err := store.GetSession("unreadable-credential")
+	if err != nil || !ok || failed.Status != SessionCleanupFailed || failed.CleanupAfter.IsZero() ||
+		failed.CleanupErr == "" {
+		t.Fatalf("凭据不可读时未留下可重试清理状态: session=%+v ok=%v err=%v", failed, ok, err)
+	}
+}
+
+func TestAttachRejectsMismatchedDeviceIdentity(t *testing.T) {
+	fake := &fakeTailscale{device: Device{
+		NodeID: "n-actual", Hostname: "pinnode-expected", Tags: []string{managedDeviceTag},
+		Created: time.Now(),
+	}}
+	store := NewStore()
+	service := NewService(testServiceConfig(), store, fake, nil)
+	_, credentialID := installTestAdminAndCredential(t, service, store)
+	token, tokenHash, err := newSecretToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := store.PutSession(Session{
+		ID: "identity-mismatch", TokenHash: tokenHash, CredentialID: credentialID, AuthKeyID: "key-identity",
+		ProvisioningName: "pinnode-expected", Status: SessionProvisioning, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := newJSONRequest(
+		http.MethodPost, "/v1/sessions/identity-mismatch/device", `{"nodeId":"n-requested"}`,
+	)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), `"code":"device_identity_mismatch"`) {
+		t.Fatalf("设备身份不匹配未被拒绝: %d %s", response.Code, response.Body.String())
+	}
+	stored, ok, err := store.GetSession("identity-mismatch")
+	if err != nil || !ok || stored.Status != SessionProvisioning || stored.DeviceID != "" {
+		t.Fatalf("身份不匹配后会话状态被改变: session=%+v ok=%v err=%v", stored, ok, err)
 	}
 }
 
@@ -536,7 +740,8 @@ func TestAPIMetaAndStructuredErrors(t *testing.T) {
 		!strings.Contains(metaResponse.Body.String(), `"protocolVersion":1`) ||
 		!strings.Contains(metaResponse.Body.String(), `"session-sync-v1"`) ||
 		!strings.Contains(metaResponse.Body.String(), `"client-state-report-v1"`) ||
-		!strings.Contains(metaResponse.Body.String(), `"client-logs-v1"`) {
+		!strings.Contains(metaResponse.Body.String(), `"client-logs-v1"`) ||
+		!strings.Contains(metaResponse.Body.String(), `"session-policy-capabilities-v1"`) {
 		t.Fatalf("API meta 响应错误: %d %s", metaResponse.Code, metaResponse.Body.String())
 	}
 
@@ -633,6 +838,37 @@ func TestUpstreamFailureDoesNotConsumePairingCode(t *testing.T) {
 	service.Handler().ServeHTTP(retryResponse, retryRequest)
 	if retryResponse.Code != http.StatusCreated {
 		t.Fatalf("上游恢复后同一 PIN 不能重试: %d %s", retryResponse.Code, retryResponse.Body.String())
+	}
+}
+
+func TestMissingRequiredCapabilityIsRejectedBeforeAuthKeyCreation(t *testing.T) {
+	fake := &fakeTailscale{}
+	store := NewStore()
+	service := NewService(testServiceConfig(), store, fake, nil)
+	authentication, credentialID := installTestAdminAndCredential(t, service, store)
+	code := createTestPairingCode(t, service, authentication, credentialID)
+	request := newJSONRequest(
+		http.MethodPost,
+		"/v1/sessions",
+		`{"code":"`+code+`","gatewayRoute":"192.168.1.1/32","protocolVersion":1,"clientVersion":"test","clientCapabilities":["session-sync-v1"]}`,
+	)
+	request.Header.Set("Idempotency-Key", "missing-capability-key")
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusPreconditionFailed ||
+		!strings.Contains(response.Body.String(), `"code":"client_capability_missing"`) {
+		t.Fatalf("缺少能力未被拒绝: %d %s", response.Code, response.Body.String())
+	}
+	fake.mu.Lock()
+	createdKeys := len(fake.ephemeralRequested)
+	fake.mu.Unlock()
+	if createdKeys != 0 {
+		t.Fatalf("能力检查之后才应创建 auth key，实际创建=%d", createdKeys)
+	}
+	if _, _, _, ok, err := store.GetRedeemableCodeWithCredential(
+		hashPairingCode(service.config.CodePepper, code), time.Now(),
+	); err != nil || !ok {
+		t.Fatalf("能力拒绝不应消费 pairing code: ok=%v err=%v", ok, err)
 	}
 }
 

@@ -91,6 +91,11 @@ App Connector 和 Netfilter 等偏好。
 只有启用 `exitPolicy.onAppClose` 时，同一个同步请求才续期租约；超过
 `PINNODE_SYNC_LEASE_TTL`（默认五分钟）后，服务端撤销路由并删除设备，用于兜底进程
 被直接终止、无法送达关闭回调的场景。
+创建会话的请求还必须携带协议版本、客户端版本和小写客户端能力列表。服务端先将
+`SessionConfig` 编译为规范化路由、Wi-Fi 路由、风险和能力门槛，再检查必要能力；缺少
+必要能力时不会创建 auth key、Session 或消费 pairing code。当前能力门槛包括
+`session-sync-v1`、`rescue-routing-v1`、`route-advertisement-v1`、`exit-node-v1` 和
+`advanced-prefs-v1`，状态上报和客户端日志能力可按协议协商。
 可配置：
 
 - `exitPolicy.afterConfigSeconds`
@@ -100,7 +105,11 @@ App Connector 和 Netfilter 等偏好。
 - `exitPolicy.onAppClose`
 
 前三个时间条件由服务端和 Android 共同执行，取最早时间。网络和应用生命周期条件
-由 Android 触发；清理失败会在手机的加密待办中保留，并在网络恢复或下次启动重试。
+由 Android 触发；清理失败会在手机的加密待办中保留，并在网络恢复或下次启动重试。服务端
+清理使用独立的 retry 时间、租约截止时间和 generation fencing；有效租约只允许一个
+worker，过期或遗留的 `cleaning` 会话可被 reaper 重新领取。停止接口在另一个 worker
+持有租约时返回 `202 {"status":"cleaning"}`，只有 `stopped` 或 `already-stopped`
+才表示客户端可以清除本地 pending cleanup。
 
 ## 部署边界
 

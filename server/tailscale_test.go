@@ -20,7 +20,7 @@ func TestExchangeOAuthTokenUsesClientCredentialsForm(t *testing.T) {
 		if r.Form.Get("grant_type") != "client_credentials" ||
 			r.Form.Get("client_id") != "client-id" || r.Form.Get("client_secret") != "client-secret" ||
 			r.Form.Get("scope") != "auth_keys devices:core devices:routes" ||
-			r.Form.Get("tags") != managedDeviceTag {
+			r.Form.Get("tags") != "" {
 			t.Errorf("OAuth client credentials 表单错误: %#v", r.Form)
 		}
 		if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "" {
