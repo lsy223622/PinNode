@@ -56,10 +56,19 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
   private val lock = ReentrantLock()
   private val activeNetworks = mutableMapOf<Network, NetworkInfo>()
   private var callbackRegistered = false
+  private var cellularRequestRegistered = false
+  private var requestedCellularNetwork: Network? = null
   private var rescueMode = false
   private var rescueRoutes: List<IpPrefix> = emptyList()
   private val _networkState = MutableStateFlow(RescueNetworkState())
   val networkState: StateFlow<RescueNetworkState> = _networkState.asStateFlow()
+
+  private val cellularRequest =
+      NetworkRequest.Builder()
+          .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+          .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+          .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+          .build()
 
   private val callback =
       object : ConnectivityManager.NetworkCallback() {
@@ -74,14 +83,21 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
 
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
           lock.withLock {
-            activeNetworks[network]?.capabilities = capabilities
+            activeNetworks
+                .getOrPut(network) { NetworkInfo(NetworkCapabilities(), LinkProperties()) }
+                .capabilities = capabilities
+            if (rescueMode && !cellularRequestRegistered && isCellular(capabilities)) {
+              requestCellularLocked()
+            }
             publishStateLocked()
           }
         }
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
           lock.withLock {
-            activeNetworks[network]?.linkProperties = linkProperties
+            activeNetworks
+                .getOrPut(network) { NetworkInfo(NetworkCapabilities(), LinkProperties()) }
+                .linkProperties = linkProperties
             publishStateLocked()
           }
         }
@@ -92,6 +108,57 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
             publishStateLocked()
           }
           TSLog.d(TAG, "网络丢失: $network")
+        }
+      }
+
+  private val cellularRequestCallback =
+      object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+          lock.withLock {
+            requestedCellularNetwork = network
+            activeNetworks.putIfAbsent(
+                network, NetworkInfo(NetworkCapabilities(), LinkProperties()))
+            publishStateLocked()
+          }
+          TSLog.d(TAG, "系统已维持蜂窝网络请求: $network")
+        }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+          lock.withLock {
+            activeNetworks
+                .getOrPut(network) { NetworkInfo(NetworkCapabilities(), LinkProperties()) }
+                .capabilities = capabilities
+            publishStateLocked()
+          }
+        }
+
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+          lock.withLock {
+            activeNetworks
+                .getOrPut(network) { NetworkInfo(NetworkCapabilities(), LinkProperties()) }
+                .linkProperties = linkProperties
+            publishStateLocked()
+          }
+        }
+
+        override fun onLost(network: Network) {
+          lock.withLock {
+            if (requestedCellularNetwork == network) {
+              requestedCellularNetwork = null
+            }
+            activeNetworks.remove(network)
+            publishStateLocked()
+          }
+          TSLog.d(TAG, "系统维持的蜂窝网络丢失: $network")
+        }
+
+        override fun onUnavailable() {
+          lock.withLock {
+            cellularRequestRegistered = false
+            requestedCellularNetwork = null
+            publishStateLocked()
+          }
+          TSLog.w(TAG, "系统无法维持蜂窝网络请求")
         }
       }
 
@@ -115,15 +182,18 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
         activeNetworks[network] = NetworkInfo(capabilities, linkProperties)
       }
       callbackRegistered = true
+      if (rescueMode) requestCellularLocked()
       publishStateLocked()
     }
   }
 
   fun stop() {
     lock.withLock {
-      if (!callbackRegistered) return
-      connectivityManager.unregisterNetworkCallback(callback)
-      callbackRegistered = false
+      if (callbackRegistered) {
+        connectivityManager.unregisterNetworkCallback(callback)
+        callbackRegistered = false
+      }
+      releaseCellularRequestLocked()
       activeNetworks.clear()
       rescueMode = false
       rescueRoutes = emptyList()
@@ -151,9 +221,15 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
   }
 
   /** 让控制面/非 LAN 目标固定选择蜂窝，即使本次会话没有 Wi-Fi 目标路由。 */
+  @SuppressLint("MissingPermission")
   fun setRescueMode(enabled: Boolean) {
     lock.withLock {
       rescueMode = enabled
+      if (enabled && callbackRegistered) {
+        requestCellularLocked()
+      } else if (!enabled) {
+        releaseCellularRequestLocked()
+      }
       publishStateLocked()
     }
   }
@@ -246,13 +322,13 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
   }
 
   private fun pickCellularLocked(): Network? {
+    requestedCellularNetwork?.let { network ->
+      val info = activeNetworks[network]
+      if (info != null && isCellular(info.capabilities)) return network
+    }
     return activeNetworks
         .asSequence()
-        .filter { (_, info) ->
-          info.capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
-              info.capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
-              info.capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        }
+        .filter { (_, info) -> isCellular(info.capabilities) }
         .sortedByDescending { (_, info) ->
           info.capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         }
@@ -326,6 +402,8 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
       )
     }
 
+    val cellularNetwork = pickCellularLocked()
+    NetworkChangeCallback.setRescueCellularNetwork(if (rescueMode) cellularNetwork else null)
     _networkState.value =
         RescueNetworkState(
             wifi = linkState(NetworkCapabilities.TRANSPORT_WIFI),
@@ -333,12 +411,40 @@ class RescueNetworkController(private val connectivityManager: ConnectivityManag
             tailscalePath =
                 if (!rescueMode) {
                   RescueTailscalePath.DEFAULT
-                } else if (pickCellularLocked() != null) {
+                } else if (cellularNetwork != null) {
                   RescueTailscalePath.CELLULAR
                 } else {
                   RescueTailscalePath.WAITING_FOR_CELLULAR
                 },
         )
+  }
+
+  private fun isCellular(capabilities: NetworkCapabilities): Boolean {
+    return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun requestCellularLocked() {
+    if (cellularRequestRegistered || !rescueMode) return
+    cellularRequestRegistered = true
+    try {
+      connectivityManager.requestNetwork(cellularRequest, cellularRequestCallback)
+      TSLog.d(TAG, "开始请求系统维持蜂窝网络")
+    } catch (e: RuntimeException) {
+      cellularRequestRegistered = false
+      requestedCellularNetwork = null
+      TSLog.w(TAG, "请求系统维持蜂窝网络失败: $e")
+    }
+  }
+
+  private fun releaseCellularRequestLocked() {
+    if (cellularRequestRegistered) {
+      connectivityManager.unregisterNetworkCallback(cellularRequestCallback)
+      cellularRequestRegistered = false
+    }
+    requestedCellularNetwork = null
   }
 
   private fun parseRoute(cidr: String): IpPrefix? {

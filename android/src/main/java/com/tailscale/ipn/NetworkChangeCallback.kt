@@ -40,9 +40,15 @@ object NetworkChangeCallback {
   // 救援模式下，Tailscale 控制面必须固定在蜂窝 Network；普通模式仍使用
   // 上游原有的默认 Network 选择逻辑。
   @Volatile private var forceCellularForControl = false
+  @Volatile private var rescueCellularNetwork: Network? = null
 
   fun setRescueMode(enabled: Boolean) {
     forceCellularForControl = enabled
+    if (!enabled) rescueCellularNetwork = null
+  }
+
+  fun setRescueCellularNetwork(network: Network?) {
+    rescueCellularNetwork = network
   }
 
   fun refreshSelectedNetwork(dns: DnsConfig) {
@@ -51,7 +57,7 @@ object NetworkChangeCallback {
 
   fun controlNetwork(): Network? {
     if (!forceCellularForControl) return cachedDefaultNetwork
-    return lock.withLock { pickCellularNetworkLocked() }
+    return rescueCellularNetwork ?: lock.withLock { pickCellularNetworkLocked() }
   }
 
   fun cellularNetwork(): Network? = lock.withLock { pickCellularNetworkLocked() }
