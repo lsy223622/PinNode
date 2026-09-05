@@ -85,7 +85,7 @@ gh secret set PINNODE_KEY_PASSWORD --env release --repo $repo
 
 ## 资产命名与许可证布局
 
-工作流从 `version.properties` 读取版本，并从实际构建提交生成 12 位短哈希 `commit`。正式
+工作流从 `version.properties` 读取版本，并从实际构建提交生成 7 位短哈希 `commit`。正式
 Release 的资产名称为：
 
 ```text

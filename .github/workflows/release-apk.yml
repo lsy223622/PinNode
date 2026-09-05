@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(sed -n 's/^PINNODE_VERSION_NAME=//p' version.properties)"
-          commit="$(git rev-parse --short=12 HEAD)"
+          commit="$(git rev-parse --short=7 HEAD)"
           test "$RELEASE_TAG" = "v$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"

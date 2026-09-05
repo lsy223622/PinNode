@@ -78,9 +78,9 @@ Android 单元测试，使用 `apksigner` 生成签名 APK 和 SHA-256 校验文
 commit 不会冻结版本，也不会触发签名发布构建。
 
 签名配置不进入仓库，规范仓库的公开工作流会忽略服务器变量，不写入或锁定服务器。
-Release 文件名包含版本号和构建提交的短哈希，例如
-`pinnode-android-v0.2.0-0123456789ab.apk` 与
-`pinnode-server-v0.2.0-linux-amd64-0123456789ab.tar.gz`；对应的 `.sha256` 文件使用相同
+Release 文件名包含版本号和构建提交的 7 位短哈希，例如
+`pinnode-android-v<version>-0123456.apk` 与
+`pinnode-server-v<version>-linux-amd64-0123456.tar.gz`；对应的 `.sha256` 文件使用相同
 文件名。APK 可直接安装（不是 AAB），并在 `assets/LICENSES.md` 中内嵌随附许可证；服务端
 压缩包内使用恒定文件名 `pinnode-server`，同时包含 `LICENSES.md`，便于部署时直接替换。
 Release 页面另提供同一版本/提交哈希命名的合并许可证文件。服务端程序不包含数据库、实例
