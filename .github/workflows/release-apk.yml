@@ -8,7 +8,7 @@ on:
       release_tag:
         description: Version tag to validate against version.properties
         required: true
-        default: v0.1.0
+        default: v0.2.0
         type: string
 
 permissions:

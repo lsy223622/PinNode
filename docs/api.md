@@ -259,7 +259,7 @@ OAuth 交换会显式请求 `auth_keys devices:core devices:routes` scope 和当
   "gatewayRoute": "192.168.1.1/32",
   "wifiSubnetRoute": "192.168.1.0/24",
   "protocolVersion": 1,
-  "clientVersion": "0.1.0",
+  "clientVersion": "0.2.0",
   "clientCapabilities": [
     "session-sync-v1",
     "client-state-report-v1",
@@ -320,7 +320,7 @@ Tailscale auth key 创建成功后，服务端在一个 SQLite 事务中消费 P
 {
   "protocolVersion": 1,
   "appliedConfigRevision": 1,
-  "clientVersion": "0.1.0",
+  "clientVersion": "0.2.0",
   "clientCapabilities": ["session-sync-v1", "client-state-report-v1", "client-logs-v1", "rescue-routing-v1", "route-advertisement-v1", "exit-node-v1", "advanced-prefs-v1"],
   "clientState": {
     "backendState": "running",

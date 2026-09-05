@@ -37,7 +37,7 @@ SNAT/有状态过滤和当前 Android backend 支持的其他偏好。手机端�
 ## 构建 Android 应用
 
 Android 最低版本为 Android 13 / API 33。
-当前应用版本为 `0.1.0`；版本名与确定性的 `versionCode` 规则见
+当前应用版本为 `0.2.0`；版本名与确定性的 `versionCode` 规则见
 [`docs/releasing.md`](docs/releasing.md)。基础 application ID 为
 `com.lsy223622.pinnode`；配置自定义服务器时追加 `.custom`，Debug 构建追加
 `.debug`，两项同时满足时为 `com.lsy223622.pinnode.custom.debug`。
@@ -79,8 +79,8 @@ commit 不会冻结版本，也不会触发签名发布构建。
 
 签名配置不进入仓库，规范仓库的公开工作流会忽略服务器变量，不写入或锁定服务器。
 Release 文件名包含版本号和构建提交的短哈希，例如
-`pinnode-android-v0.1.0-0123456789ab.apk` 与
-`pinnode-server-v0.1.0-linux-amd64-0123456789ab.tar.gz`；对应的 `.sha256` 文件使用相同
+`pinnode-android-v0.2.0-0123456789ab.apk` 与
+`pinnode-server-v0.2.0-linux-amd64-0123456789ab.tar.gz`；对应的 `.sha256` 文件使用相同
 文件名。APK 可直接安装（不是 AAB），并在 `assets/LICENSES.md` 中内嵌随附许可证；服务端
 压缩包内使用恒定文件名 `pinnode-server`，同时包含 `LICENSES.md`，便于部署时直接替换。
 Release 页面另提供同一版本/提交哈希命名的合并许可证文件。服务端程序不包含数据库、实例
