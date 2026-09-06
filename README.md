@@ -1,3 +1,5 @@
+[English](README.en.md) | [简体中文](README.md)
+
 # PinNode
 
 PinNode 是一个由服务端统一下发配置的 Android Tailscale 节点。它基于 Tailscale
