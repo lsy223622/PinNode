@@ -66,6 +66,30 @@ func TestValidateCredentialUsesBearerHeaderAndConfiguredTailnet(t *testing.T) {
 	}
 }
 
+func TestGetDeviceUsesConnectedToControl(t *testing.T) {
+	testToken := fakeTailscaleKey("api", "device")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v2/device/node-test" {
+			t.Errorf("读取设备请求错误: %s %s", r.Method, r.URL.Path)
+		}
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer "+testToken {
+			t.Errorf("读取设备认证头错误: %q", authorization)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"nodeId":"node-test","connectedToControl":true,"online":false}`))
+	}))
+	defer server.Close()
+
+	client := NewTailscaleClient(Config{TailscaleBaseURL: server.URL, TailscaleTailnet: "-"})
+	device, err := client.GetDevice(t.Context(), testToken, "node-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !device.ConnectedToControl {
+		t.Fatalf("connectedToControl = false, want true: %+v", device)
+	}
+}
+
 func TestCreateAuthKeyUsesManagedDeviceTag(t *testing.T) {
 	testAccessToken := fakeTailscaleKey("oauth", "test")
 	testAuthKey := fakeTailscaleKey("auth", "test")

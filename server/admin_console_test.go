@@ -16,13 +16,13 @@ import (
 func TestAdminConsoleReportsPendingAndActiveClientState(t *testing.T) {
 	fake := &fakeTailscale{
 		device: Device{
-			NodeID:     "n-console",
-			Tags:       []string{managedDeviceTag},
-			Online:     true,
-			Authorized: true,
-			Name:       "console-device.example.ts.net",
-			Addresses:  []string{"100.64.0.42"},
-			OS:         "android",
+			NodeID:             "n-console",
+			Tags:               []string{managedDeviceTag},
+			ConnectedToControl: true,
+			Authorized:         true,
+			Name:               "console-device.example.ts.net",
+			Addresses:          []string{"100.64.0.42"},
+			OS:                 "android",
 		},
 	}
 	store := NewStore()
@@ -151,7 +151,7 @@ type adminConsoleTestResponse struct {
 func TestAdminConsoleCountsEveryNonHealthyStateAsAttention(t *testing.T) {
 	now := time.Now()
 	fake := &fakeTailscale{device: Device{
-		NodeID: "n-healthy", Hostname: "healthy.example.ts.net", Online: true,
+		NodeID: "n-healthy", Hostname: "healthy.example.ts.net", ConnectedToControl: true,
 		Authorized: true, Tags: []string{managedDeviceTag}, Created: now,
 	}}
 	store := NewStore()

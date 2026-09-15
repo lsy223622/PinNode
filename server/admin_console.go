@@ -267,7 +267,7 @@ func publicConsoleDevice(device Device) map[string]any {
 		"lastSeenAt":       formatOptionalDeviceTime(device.LastSeen),
 		"addresses":        append([]string{}, device.Addresses...),
 		"tags":             append([]string{}, device.Tags...),
-		"online":           device.Online,
+		"online":           device.ConnectedToControl,
 		"authorized":       device.Authorized,
 		"isEphemeral":      device.IsEphemeral,
 		"os":               device.OS,
@@ -360,7 +360,7 @@ func consoleHealth(
 	if device.IsEphemeral {
 		return "Warning", "Tailscale 节点被标记为 ephemeral"
 	}
-	if !device.Online {
+	if !device.ConnectedToControl {
 		return "Warning", "Tailscale 节点离线，但 PinNode 最近仍有上报"
 	}
 	if age >= leaseTTL/2 {
