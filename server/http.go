@@ -36,6 +36,7 @@ type Service struct {
 	consoleDeviceMu    sync.Mutex
 	consoleDeviceCache map[string]cachedConsoleDevice
 	startMu            sync.Mutex
+	sessionMu          sync.Mutex
 }
 
 func NewService(config Config, store *Store, tailscale TailscaleAPI, logger *log.Logger) *Service {
@@ -154,6 +155,8 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleAdminRecentLogs(w, r)
 	case r.URL.Path == "/v1/admin/logs/stream":
 		s.handleAdminEventStream(w, r, "log")
+	case strings.HasPrefix(r.URL.Path, "/v1/admin/sessions/"):
+		s.handleAdminSessionStop(w, r)
 	case r.URL.Path == "/v1/sessions":
 		s.handleStartSession(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/sessions/"):
@@ -476,9 +479,11 @@ func (s *Service) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		AuthKeyID:            authKey.ID,
 		ProvisioningName:     provisioningHostname(sessionToken[:16]),
 		Route:                request.GatewayRoute,
+		WiFiSubnetRoute:      request.WiFiSubnetRoute,
 		Routes:               policy.Routes,
 		WiFiRoutes:           policy.WiFiRoutes,
 		Config:               config,
+		ClientCapabilities:   cloneClientCapabilities(request.ClientCapabilities),
 		PairingCodeHash:      codeHash,
 		ConfigRevision:       1,
 		CreatedAt:            now,
@@ -567,9 +572,15 @@ func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := parts[0]
+	if len(parts) == 2 && parts[1] == "config" {
+		s.handleAdminSessionConfig(w, r, sessionID)
+		return
+	}
 	if !s.allowRate(w, "session-auth:"+credentialFingerprint(bearerToken(r)), 300, 5*time.Minute) {
 		return
 	}
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
 	session, ok, err := s.store.GetSession(sessionID)
 	if err != nil {
 		s.logger.Errorf("session", "读取会话失败: error=%s", safeDiagnosticError(err))
@@ -666,6 +677,12 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 			writeError(w, http.StatusInternalServerError, "device_binding_refresh_failed", "刷新设备绑定失败")
 			return
 		}
+		refreshed, found, refreshErr := s.store.GetSession(session.ID)
+		if refreshErr != nil || !found {
+			writeError(w, http.StatusInternalServerError, "device_binding_refresh_failed", "刷新设备绑定失败")
+			return
+		}
+		session = refreshed
 		_ = s.store.DeleteSessionStartReplay(session.ID)
 		writeJSON(w, http.StatusOK, attachedDeviceResponse(session, request.NodeID))
 		return
@@ -704,6 +721,12 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusConflict, "device_already_bound", "设备已绑定到其他会话")
 		return
 	}
+	refreshed, found, refreshErr := s.store.GetSession(session.ID)
+	if refreshErr != nil || !found {
+		writeError(w, http.StatusInternalServerError, "device_attach_failed", "读取绑定会话失败")
+		return
+	}
+	session = refreshed
 	if session.Config.TailscaleIP != "" {
 		if err := s.tailscale.SetDeviceIPv4(r.Context(), accessToken, request.NodeID, session.Config.TailscaleIP); err != nil {
 			_ = s.store.DetachDevice(session.ID, request.NodeID, now)
@@ -727,11 +750,15 @@ func (s *Service) handleAttachDevice(w http.ResponseWriter, r *http.Request, ses
 
 func attachedDeviceResponse(session Session, nodeID string) map[string]any {
 	return map[string]any{
-		"nodeId":       nodeID,
-		"gatewayRoute": session.Route,
-		"routes":       session.Routes,
-		"wifiRoutes":   session.WiFiRoutes,
-		"enabled":      true,
+		"sessionId":      session.ID,
+		"nodeId":         nodeID,
+		"configRevision": session.ConfigRevision,
+		"config":         cloneSessionConfig(session.Config),
+		"gatewayRoute":   session.Route,
+		"routes":         append([]string{}, session.Routes...),
+		"wifiRoutes":     append([]string{}, session.WiFiRoutes...),
+		"expiresAt":      formatOptionalTime(session.ExpiresAt),
+		"enabled":        true,
 	}
 }
 
@@ -804,8 +831,9 @@ func (s *Service) handleSessionSync(w http.ResponseWriter, r *http.Request, sess
 		}
 		clientStateJSON = string(encoded)
 	}
-	updated, err := s.store.SyncSessionWithState(
+	updated, err := s.store.SyncSessionWithStateAndCapabilities(
 		session.ID, now, deadline, request.AppliedConfigRevision, clientStateJSON,
+		request.ClientCapabilities,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "session_sync_failed", "同步会话状态失败")
@@ -815,11 +843,17 @@ func (s *Service) handleSessionSync(w http.ResponseWriter, r *http.Request, sess
 		writeError(w, http.StatusConflict, "session_state_conflict", "会话正在清理或配置 revision 已变化")
 		return
 	}
+	if refreshed, found, refreshErr := s.store.GetSession(session.ID); refreshErr != nil || !found {
+		writeError(w, http.StatusInternalServerError, "session_sync_failed", "读取同步后的会话状态失败")
+		return
+	} else {
+		session = refreshed
+	}
 	s.events.publishState("session_sync")
 	response := sessionSyncResponse{
 		ProtocolVersion:      protocolVersion,
 		ServerFeatures:       append([]string{}, serverFeatures...),
-		Status:               SessionActive,
+		Status:               session.Status,
 		ServerTime:           now.UTC().Format(time.RFC3339),
 		NextSyncAfterSeconds: int64(syncInterval(s.config.SyncLeaseTTL) / time.Second),
 		SyncDeadline:         formatOptionalTime(deadline),
@@ -845,42 +879,56 @@ func (s *Service) syncDeadline(session Session, now time.Time) time.Time {
 }
 
 func (s *Service) stopSession(w http.ResponseWriter, ctx context.Context, id string) {
-	session, ok, err := s.store.BeginCleanupWithLease(
-		id, time.Now(), true, "client_stop", s.cleanupLeaseTTL(),
-	)
-	if err != nil {
-		s.logger.Errorf("cleanup", "开始清理会话失败: sessionRef=%s error=%s", diagnosticIdentifier(id), safeDiagnosticError(err))
+	status, responseStatus, startErr, cleanupErr := s.stopSessionResult(ctx, id, "client_stop")
+	if startErr != nil {
+		s.logger.Errorf("cleanup", "开始清理会话失败: sessionRef=%s error=%s", diagnosticIdentifier(id), safeDiagnosticError(startErr))
 		writeError(w, http.StatusInternalServerError, "session_cleanup_start_failed", "开始清理会话失败")
 		return
 	}
+	if cleanupErr != nil {
+		writeError(w, http.StatusBadGateway, "session_cleanup_failed", "清理 Tailscale 节点失败，请稍后重试")
+		return
+	}
+	if responseStatus == http.StatusConflict {
+		writeError(w, responseStatus, "session_state_conflict", "会话当前不能开始清理")
+		return
+	}
+	writeJSON(w, responseStatus, map[string]string{"status": status})
+}
+
+func (s *Service) stopSessionResult(
+	ctx context.Context,
+	id string,
+	reason string,
+) (status string, responseStatus int, startErr, cleanupErr error) {
+	session, ok, err := s.store.BeginCleanupWithLease(
+		id, time.Now(), true, reason, s.cleanupLeaseTTL(),
+	)
+	if err != nil {
+		return "", http.StatusInternalServerError, err, nil
+	}
 	if !ok {
 		if session.Status == SessionStopped {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "already-stopped"})
-			return
+			return "already-stopped", http.StatusOK, nil, nil
 		}
 		if session.Status == SessionCleaning {
-			writeJSON(w, http.StatusAccepted, map[string]string{"status": "cleaning"})
-			return
+			return "cleaning", http.StatusAccepted, nil, nil
 		}
-		writeError(w, http.StatusConflict, "session_state_conflict", "会话当前不能开始清理")
-		return
+		return "", http.StatusConflict, nil, nil
 	}
 	s.events.publishState("session_cleanup_started")
 	err = s.cleanupSessionClaim(ctx, session)
 	if errors.Is(err, ErrStaleCleanupClaim) {
 		current, found, readErr := s.store.GetSession(id)
 		if readErr == nil && found && current.Status == SessionStopped {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "already-stopped"})
-			return
+			return "already-stopped", http.StatusOK, nil, nil
 		}
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "cleaning"})
-		return
+		return "cleaning", http.StatusAccepted, nil, nil
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "session_cleanup_failed", "清理 Tailscale 节点失败，请稍后重试")
-		return
+		return "", http.StatusBadGateway, nil, err
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+	return "stopped", http.StatusOK, nil, nil
 }
 
 func (s *Service) cleanupSession(ctx context.Context, id string) error {
@@ -968,24 +1016,61 @@ func isHTTPStatus(err error, status int) bool {
 }
 
 func (s *Service) ReapOnce(ctx context.Context, now time.Time) {
+	s.reconcilePendingRoutes(ctx)
 	sessions, err := s.store.ReapableSessions(now)
 	if err != nil {
 		s.logger.Errorf("cleanup", "读取待清理会话失败: error=%s", safeDiagnosticError(err))
 		return
 	}
 	for _, session := range sessions {
+		s.sessionMu.Lock()
 		claimed, ok, err := s.store.BeginCleanupWithLease(
 			session.ID, now, false, "", s.cleanupLeaseTTL(),
 		)
 		if err != nil {
 			s.logger.Errorf("cleanup", "锁定待清理会话失败: sessionRef=%s error=%s", diagnosticIdentifier(session.ID), safeDiagnosticError(err))
+			s.sessionMu.Unlock()
 			continue
 		} else if !ok {
+			s.sessionMu.Unlock()
 			continue
 		}
 		if err := s.cleanupSessionClaim(ctx, claimed); err != nil {
 			s.logger.Errorf("cleanup", "会话自动清理失败: sessionRef=%s error=%s", diagnosticIdentifier(session.ID), safeDiagnosticError(err))
 		}
+		s.sessionMu.Unlock()
+	}
+}
+
+func (s *Service) reconcilePendingRoutes(ctx context.Context) {
+	sessions, err := s.store.ListPendingRouteReconciliations()
+	if err != nil {
+		s.logger.Errorf("tailscale", "读取待恢复会话路由失败: error=%s", safeDiagnosticError(err))
+		return
+	}
+	for _, snapshot := range sessions {
+		s.sessionMu.Lock()
+		current, found, readErr := s.store.GetSession(snapshot.ID)
+		if readErr != nil || !found || !current.RouteReconcilePending {
+			s.sessionMu.Unlock()
+			continue
+		}
+		if current.Status != SessionActive || current.DeviceID == "" {
+			if _, clearErr := s.store.ClearSessionRouteReconcile(current.ID, time.Now()); clearErr != nil {
+				s.logger.Errorf("session", "清除无效会话路由恢复标记失败: sessionRef=%s error=%s", diagnosticIdentifier(current.ID), safeDiagnosticError(clearErr))
+			}
+			s.sessionMu.Unlock()
+			continue
+		}
+		if restoreErr := s.restoreSessionRoutes(ctx, current); restoreErr != nil {
+			s.logger.Errorf("tailscale", "后台恢复会话旧路由失败: sessionRef=%s nodeRef=%s error=%s", diagnosticIdentifier(current.ID), diagnosticIdentifier(current.DeviceID), safeDiagnosticError(restoreErr))
+			s.sessionMu.Unlock()
+			continue
+		}
+		if _, clearErr := s.store.ClearSessionRouteReconcile(current.ID, time.Now()); clearErr != nil {
+			s.logger.Errorf("session", "后台清除会话路由恢复标记失败: sessionRef=%s error=%s", diagnosticIdentifier(current.ID), safeDiagnosticError(clearErr))
+		}
+		s.sessionMu.Unlock()
 	}
 }
 

@@ -75,6 +75,7 @@ type Session struct {
 	AuthKeyID             string
 	ProvisioningName      string
 	Route                 string
+	WiFiSubnetRoute       string
 	Routes                []string
 	WiFiRoutes            []string
 	Config                SessionConfig
@@ -95,6 +96,8 @@ type Session struct {
 	StoppedAt             time.Time
 	StopReason            string
 	ClientStateJSON       string
+	ClientCapabilities    []string
+	RouteReconcilePending bool
 	UpdatedAt             time.Time
 }
 
@@ -178,6 +181,7 @@ func (s *Store) migrate() error {
 			auth_key_id TEXT NOT NULL,
 			provisioning_name TEXT NOT NULL UNIQUE,
 			route TEXT NOT NULL,
+			wifi_subnet_route TEXT NOT NULL DEFAULT '',
 			routes_json TEXT NOT NULL,
 			wifi_routes_json TEXT NOT NULL,
 			config_json TEXT NOT NULL,
@@ -198,6 +202,8 @@ func (s *Store) migrate() error {
 			stopped_at INTEGER,
 			stop_reason TEXT NOT NULL DEFAULT '',
 			client_state_json TEXT NOT NULL DEFAULT '{}',
+			client_capabilities_json TEXT NOT NULL DEFAULT '[]',
+			route_reconcile_pending INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS sessions_active_created_idx
@@ -276,6 +282,15 @@ func (s *Store) migrate() error {
 	if err := s.ensureColumn("sessions", "client_state_json", "client_state_json TEXT NOT NULL DEFAULT '{}'"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("sessions", "wifi_subnet_route", "wifi_subnet_route TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sessions", "client_capabilities_json", "client_capabilities_json TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sessions", "route_reconcile_pending", "route_reconcile_pending INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("sessions", "cleanup_generation", "cleanup_generation INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -317,6 +332,12 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("记录 SQLite 迁移: %w", err)
 	}
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, unixepoch() * 1000)`); err != nil {
+		return fmt.Errorf("记录 SQLite 迁移: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (8, unixepoch() * 1000)`); err != nil {
+		return fmt.Errorf("记录 SQLite 迁移: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (9, unixepoch() * 1000)`); err != nil {
 		return fmt.Errorf("记录 SQLite 迁移: %w", err)
 	}
 	return nil
@@ -819,6 +840,10 @@ func insertSession(execer sqlExecer, session Session) error {
 	if err != nil {
 		return err
 	}
+	clientCapabilities, err := json.Marshal(cloneClientCapabilities(session.ClientCapabilities))
+	if err != nil {
+		return fmt.Errorf("编码客户端能力: %w", err)
+	}
 	clientState := strings.TrimSpace(session.ClientStateJSON)
 	if clientState == "" {
 		clientState = "{}"
@@ -834,25 +859,25 @@ func insertSession(execer sqlExecer, session Session) error {
 	}
 	_, err = execer.Exec(
 		`INSERT INTO sessions(
-			id, token_hash, pairing_code_hash, credential_id, auth_key_id, provisioning_name, route, routes_json,
+			id, token_hash, pairing_code_hash, credential_id, auth_key_id, provisioning_name, route, wifi_subnet_route, routes_json,
 			wifi_routes_json, config_json, config_revision, applied_config_revision,
 			device_id, connected_at, created_at, provisioning_deadline, expires_at, last_seen_at, sync_deadline,
 			status, cleanup_error, cleanup_after, cleanup_generation, cleanup_lease_until,
-			stopped_at, stop_reason, client_state_json, updated_at
+			stopped_at, stop_reason, client_state_json, client_capabilities_json, route_reconcile_pending, updated_at
 		) VALUES (
-			?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?,
+			?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?,
 			?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?, ?, ?
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		)`,
 		session.ID, session.TokenHash, session.PairingCodeHash, session.CredentialID, session.AuthKeyID,
-		session.ProvisioningName, session.Route, routes, wifiRoutes, config, session.ConfigRevision,
+		session.ProvisioningName, session.Route, session.WiFiSubnetRoute, routes, wifiRoutes, config, session.ConfigRevision,
 		session.AppliedConfigRevision, session.DeviceID, nullableMillis(session.ConnectedAt),
 		toMillis(session.CreatedAt), nullableMillis(session.ProvisioningDeadline),
 		nullableMillis(session.ExpiresAt), nullableMillis(session.LastSeenAt),
 		nullableMillis(session.SyncDeadline), session.Status, session.CleanupErr,
 		nullableMillis(session.CleanupAfter), session.CleanupGeneration,
 		nullableMillis(session.CleanupLeaseUntil), nullableMillis(session.StoppedAt),
-		session.StopReason, clientState, toMillis(session.UpdatedAt),
+		session.StopReason, clientState, string(clientCapabilities), boolToInt(session.RouteReconcilePending), toMillis(session.UpdatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("保存会话: %w", err)
@@ -932,6 +957,87 @@ func (s *Store) TouchSession(id string, now, deadline time.Time) (bool, error) {
 	return count == 1, err
 }
 
+// UpdateSessionConfigCAS stores a complete normalized configuration only when
+// the caller still owns the revision it read. The status predicate prevents a
+// cleanup claim from being reopened by a stale admin request.
+func (s *Store) UpdateSessionConfigCAS(
+	id string,
+	expectedRevision int64,
+	config SessionConfig,
+	routes, wifiRoutes []string,
+	expiresAt, syncDeadline, now time.Time,
+) (bool, error) {
+	encodedRoutes, err := json.Marshal(append([]string{}, routes...))
+	if err != nil {
+		return false, fmt.Errorf("编码会话路由: %w", err)
+	}
+	encodedWiFiRoutes, err := json.Marshal(append([]string{}, wifiRoutes...))
+	if err != nil {
+		return false, fmt.Errorf("编码 Wi-Fi 路由: %w", err)
+	}
+	encodedConfig, err := json.Marshal(cloneSessionConfig(config))
+	if err != nil {
+		return false, fmt.Errorf("编码会话配置: %w", err)
+	}
+	result, err := s.db.Exec(
+		`UPDATE sessions SET routes_json = ?, wifi_routes_json = ?, config_json = ?,
+			config_revision = config_revision + 1, expires_at = ?, sync_deadline = ?,
+			route_reconcile_pending = 0, updated_at = ?
+			 WHERE id = ? AND config_revision = ? AND status IN (?, ?)`,
+		string(encodedRoutes), string(encodedWiFiRoutes), string(encodedConfig),
+		nullableMillis(expiresAt), nullableMillis(syncDeadline), toMillis(now),
+		id, expectedRevision, SessionProvisioning, SessionActive,
+	)
+	if err != nil {
+		return false, fmt.Errorf("保存会话配置: %w", err)
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) MarkSessionRouteReconcile(id string, expectedRevision int64, now time.Time) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE sessions SET route_reconcile_pending = 1, updated_at = ?
+		 WHERE id = ? AND config_revision = ? AND status = ? AND route_reconcile_pending = 0`,
+		toMillis(now), id, expectedRevision, SessionActive,
+	)
+	if err != nil {
+		return false, fmt.Errorf("标记会话路由恢复: %w", err)
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) ClearSessionRouteReconcile(id string, now time.Time) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE sessions SET route_reconcile_pending = 0, updated_at = ?
+		 WHERE id = ? AND route_reconcile_pending = 1`,
+		toMillis(now), id,
+	)
+	if err != nil {
+		return false, fmt.Errorf("清除会话路由恢复标记: %w", err)
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) ListPendingRouteReconciliations() ([]Session, error) {
+	rows, err := s.db.Query(sessionSelect + ` WHERE route_reconcile_pending = 1 ORDER BY updated_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []Session
+	for rows.Next() {
+		session, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
 func (s *Store) SyncSession(id string, now, deadline time.Time, appliedRevision int64) (bool, error) {
 	return s.SyncSessionWithState(id, now, deadline, appliedRevision, "")
 }
@@ -941,6 +1047,27 @@ func (s *Store) SyncSessionWithState(
 	now, deadline time.Time,
 	appliedRevision int64,
 	clientStateJSON string,
+) (bool, error) {
+	return s.syncSessionWithState(id, now, deadline, appliedRevision, clientStateJSON, nil, false)
+}
+
+func (s *Store) SyncSessionWithStateAndCapabilities(
+	id string,
+	now, deadline time.Time,
+	appliedRevision int64,
+	clientStateJSON string,
+	clientCapabilities []string,
+) (bool, error) {
+	return s.syncSessionWithState(id, now, deadline, appliedRevision, clientStateJSON, clientCapabilities, true)
+}
+
+func (s *Store) syncSessionWithState(
+	id string,
+	now, deadline time.Time,
+	appliedRevision int64,
+	clientStateJSON string,
+	clientCapabilities []string,
+	updateCapabilities bool,
 ) (bool, error) {
 	if appliedRevision < 0 {
 		return false, errors.New("客户端配置 revision 不能为负数")
@@ -952,19 +1079,37 @@ func (s *Store) SyncSessionWithState(
 	if !json.Valid([]byte(clientStateJSON)) {
 		return false, errors.New("客户端状态不是有效 JSON")
 	}
-	result, err := s.db.Exec(
-		`UPDATE sessions
+	query := `UPDATE sessions
 		 SET last_seen_at = ?, sync_deadline = ?,
 		     applied_config_revision = CASE
 		         WHEN applied_config_revision < ? THEN ?
 		         ELSE applied_config_revision
 		     END,
 		     client_state_json = ?, updated_at = ?
-		 WHERE id = ? AND status = ? AND config_revision >= ?`,
+		 WHERE id = ? AND status = ? AND config_revision >= ?`
+	args := []any{
 		toMillis(now), nullableMillis(deadline), appliedRevision, appliedRevision,
-		clientStateJSON, toMillis(now),
-		id, SessionActive, appliedRevision,
-	)
+		clientStateJSON, toMillis(now), id, SessionActive, appliedRevision,
+	}
+	if updateCapabilities {
+		encoded, err := json.Marshal(cloneClientCapabilities(clientCapabilities))
+		if err != nil {
+			return false, fmt.Errorf("编码客户端能力: %w", err)
+		}
+		query = `UPDATE sessions
+			 SET last_seen_at = ?, sync_deadline = ?,
+			     applied_config_revision = CASE
+			         WHEN applied_config_revision < ? THEN ?
+			         ELSE applied_config_revision
+			     END,
+			     client_state_json = ?, client_capabilities_json = ?, updated_at = ?
+			 WHERE id = ? AND status = ? AND config_revision >= ?`
+		args = []any{
+			toMillis(now), nullableMillis(deadline), appliedRevision, appliedRevision,
+			clientStateJSON, string(encoded), toMillis(now), id, SessionActive, appliedRevision,
+		}
+	}
+	result, err := s.db.Exec(query, args...)
 	if err != nil {
 		return false, fmt.Errorf("同步会话状态: %w", err)
 	}
@@ -1021,7 +1166,8 @@ func (s *Store) BeginCleanupWithLease(
 	leaseUntil := now.Add(leaseTTL)
 	result, err := tx.Exec(
 		`UPDATE sessions SET status = ?, cleanup_error = '', cleanup_after = NULL,
-			 cleanup_generation = ?, cleanup_lease_until = ?, stop_reason = ?, updated_at = ?
+				cleanup_generation = ?, cleanup_lease_until = ?, stop_reason = ?,
+				route_reconcile_pending = 0, updated_at = ?
 		 WHERE id = ? AND status = ?
 		   AND (status <> ? OR cleanup_lease_until IS NULL OR cleanup_lease_until <= ?)`,
 		SessionCleaning, nextGeneration, toMillis(leaseUntil), reason, toMillis(now),
@@ -1177,11 +1323,13 @@ func (s *Store) ListActiveSessions() ([]Session, error) {
 }
 
 const sessionSelect = `SELECT
-	id, token_hash, COALESCE(pairing_code_hash, ''), COALESCE(credential_id, ''), auth_key_id, provisioning_name, route, routes_json,
+	id, token_hash, COALESCE(pairing_code_hash, ''), COALESCE(credential_id, ''), auth_key_id, provisioning_name, route,
+	COALESCE(wifi_subnet_route, ''), routes_json,
 	wifi_routes_json, config_json, config_revision, applied_config_revision,
 	COALESCE(device_id, ''), connected_at, created_at, provisioning_deadline, expires_at, last_seen_at, sync_deadline,
 	status, cleanup_error, cleanup_after, cleanup_generation, cleanup_lease_until,
-	stopped_at, stop_reason, client_state_json, updated_at
+	stopped_at, stop_reason, client_state_json, COALESCE(client_capabilities_json, '[]'),
+	COALESCE(route_reconcile_pending, 0), updated_at
 	FROM sessions`
 
 type rowScanner interface {
@@ -1193,16 +1341,17 @@ func scanSession(scanner rowScanner) (Session, error) {
 	var routes, wifiRoutes, config string
 	var provisioningDeadline, expiresAt, lastSeenAt, syncDeadline sql.NullInt64
 	var connectedAt, cleanupAfter, cleanupLeaseUntil, stoppedAt sql.NullInt64
-	var clientState string
+	var clientState, clientCapabilities string
+	var routeReconcilePending int
 	var createdAt, updatedAt int64
 	err := scanner.Scan(
 		&session.ID, &session.TokenHash, &session.PairingCodeHash, &session.CredentialID, &session.AuthKeyID, &session.ProvisioningName,
-		&session.Route, &routes, &wifiRoutes, &config, &session.ConfigRevision,
+		&session.Route, &session.WiFiSubnetRoute, &routes, &wifiRoutes, &config, &session.ConfigRevision,
 		&session.AppliedConfigRevision, &session.DeviceID, &connectedAt, &createdAt,
 		&provisioningDeadline, &expiresAt, &lastSeenAt, &syncDeadline,
 		&session.Status, &session.CleanupErr, &cleanupAfter, &session.CleanupGeneration,
 		&cleanupLeaseUntil, &stoppedAt,
-		&session.StopReason, &clientState, &updatedAt,
+		&session.StopReason, &clientState, &clientCapabilities, &routeReconcilePending, &updatedAt,
 	)
 	if err != nil {
 		return Session{}, err
@@ -1232,6 +1381,12 @@ func scanSession(scanner rowScanner) (Session, error) {
 		clientState = "{}"
 	}
 	session.ClientStateJSON = clientState
+	session.RouteReconcilePending = routeReconcilePending != 0
+	if strings.TrimSpace(clientCapabilities) == "" || json.Unmarshal([]byte(clientCapabilities), &session.ClientCapabilities) != nil || session.ClientCapabilities == nil {
+		session.ClientCapabilities = []string{}
+	} else {
+		session.ClientCapabilities = cloneClientCapabilities(session.ClientCapabilities)
+	}
 	session.UpdatedAt = fromMillis(updatedAt)
 	return session, nil
 }
@@ -1315,6 +1470,13 @@ func cloneSessionConfig(config SessionConfig) SessionConfig {
 	return config
 }
 
+func cloneClientCapabilities(capabilities []string) []string {
+	if capabilities == nil {
+		return []string{}
+	}
+	return append([]string{}, capabilities...)
+}
+
 func toMillis(value time.Time) int64 {
 	return value.UTC().UnixMilli()
 }
@@ -1324,6 +1486,13 @@ func nullableMillis(value time.Time) any {
 		return nil
 	}
 	return toMillis(value)
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func fromMillis(value int64) time.Time {

@@ -46,6 +46,12 @@ func (s *Service) handleAdminConsole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "console_read_failed", "读取控制台状态失败")
 		return
 	}
+	historySessions, err := s.store.ListSessions(1000)
+	if err != nil {
+		s.logger.Errorf("admin-console", "读取历史控制台会话失败: %v", err)
+		writeError(w, http.StatusInternalServerError, "console_read_failed", "读取控制台状态失败")
+		return
+	}
 
 	pending := make([]map[string]any, 0, len(codes))
 	for _, code := range codes {
@@ -57,6 +63,12 @@ func (s *Service) handleAdminConsole(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		active = append(active, s.consoleSession(r, session, now))
+	}
+	history := make([]map[string]any, 0)
+	for _, session := range historySessions {
+		if session.Status == SessionStopped {
+			history = append(history, s.consoleSession(r, session, now))
+		}
 	}
 
 	counts := map[string]int{
@@ -91,6 +103,7 @@ func (s *Service) handleAdminConsole(w http.ResponseWriter, r *http.Request) {
 		"eventSequence": s.events.latest(),
 		"pending":       pending,
 		"sessions":      active,
+		"history":       history,
 		"counts":        counts,
 	})
 }
@@ -106,7 +119,7 @@ func (s *Service) consolePairingCode(code PairingCode, now time.Time) map[string
 	if code.ExpiresAt.After(now) {
 		remaining = int64((code.ExpiresAt.Sub(now) + time.Second - 1) / time.Second)
 	}
-	return map[string]any{
+	item := map[string]any{
 		"code":             value,
 		"codeAvailable":    value != "",
 		"codeRef":          diagnosticIdentifier(code.Hash),
@@ -117,12 +130,23 @@ func (s *Service) consolePairingCode(code PairingCode, now time.Time) map[string
 		"configSummary":    sessionConfigSummary(code.Config),
 		"config":           cloneSessionConfig(code.Config),
 	}
+	if credential, ok, err := s.store.GetTailscaleCredential(code.CredentialID); err == nil && ok {
+		item["credential"] = publicTailscaleCredential(credential)
+	} else {
+		item["credential"] = map[string]any{"id": code.CredentialID, "name": "", "type": ""}
+	}
+	return item
 }
 
 func (s *Service) consoleSession(r *http.Request, session Session, now time.Time) map[string]any {
 	clientState := decodeClientState(session.ClientStateJSON)
-	device, tailscaleErr := s.consoleDevice(r, session)
+	var device *Device
+	var tailscaleErr error
+	if session.Status != SessionStopped {
+		device, tailscaleErr = s.consoleDevice(r, session)
+	}
 	health, healthReason := consoleHealth(s.config.SyncLeaseTTL, session, clientState, device, tailscaleErr, now)
+	policy, policyErr := CompileSessionPolicy(session.Config, session.Route, session.WiFiSubnetRoute)
 	item := map[string]any{
 		"sessionId":             session.ID,
 		"authorizationCode":     s.sessionPairingCode(session),
@@ -141,10 +165,26 @@ func (s *Service) consoleSession(r *http.Request, session Session, now time.Time
 		"config":                cloneSessionConfig(session.Config),
 		"configRevision":        session.ConfigRevision,
 		"appliedConfigRevision": session.AppliedConfigRevision,
+		"applyState":            sessionApplyState(session),
 		"routes":                append([]string{}, session.Routes...),
 		"wifiRoutes":            append([]string{}, session.WiFiRoutes...),
+		"clientCapabilities":    cloneClientCapabilities(session.ClientCapabilities),
+		"routeContextAvailable": routeContextAvailable(session),
 		"clientState":           clientState,
 		"tailscaleStatus":       "not-attached",
+	}
+	if policyErr == nil {
+		item["policy"] = publicSessionPolicy(policy)
+	} else {
+		item["policy"] = map[string]any{"riskLevel": "unknown", "riskReasons": []string{"policy_unavailable"}}
+	}
+	if credential, ok, err := s.store.GetTailscaleCredential(session.CredentialID); err == nil && ok {
+		item["credential"] = publicTailscaleCredential(credential)
+	} else {
+		item["credential"] = map[string]any{"id": session.CredentialID, "name": "", "type": ""}
+	}
+	if session.CleanupErr != "" {
+		item["cleanupError"] = session.CleanupErr
 	}
 	if tailscaleErr != nil {
 		item["tailscaleStatus"] = "unavailable"
@@ -280,6 +320,8 @@ func consoleHealth(
 	switch session.Status {
 	case SessionCleaning, SessionCleanupFailed:
 		return "Cleaning", "会话正在清理"
+	case SessionStopped:
+		return "Unknown", "会话已停止"
 	case SessionProvisioning:
 		if !session.ProvisioningDeadline.IsZero() && !now.Before(session.ProvisioningDeadline) {
 			return "Ending", "设备绑定期限已到"

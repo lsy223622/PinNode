@@ -293,6 +293,19 @@ class RescueSessionManager(private val app: App) {
   @Serializable private data class AttachDeviceRequest(val nodeId: String)
 
   @Serializable
+  private data class AttachDeviceResponse(
+      val sessionId: String = "",
+      val nodeId: String = "",
+      val configRevision: Long = 0,
+      val config: SessionConfig = SessionConfig(),
+      val gatewayRoute: String = "",
+      val routes: List<String> = emptyList(),
+      val wifiRoutes: List<String> = emptyList(),
+      val expiresAt: String? = null,
+      val enabled: Boolean = false,
+  )
+
+  @Serializable
   private data class ActiveSession(
       val id: String,
       val token: String,
@@ -495,9 +508,24 @@ class RescueSessionManager(private val app: App) {
               response.provisioningHostname,
           )
           val nodeId = waitForNodeID(previousNodeID)
-          attachDeviceWithRetry(pending, nodeId)
-          applyConfig(Client(app.applicationScope), response.config, response.routes)
-          pending = pending.copy(attached = true)
+          val attached = attachDeviceWithRetry(pending, nodeId)
+          if (attached.sessionId != pending.id || attached.nodeId != nodeId || !attached.enabled) {
+            throw PinNodeApiConfigurationException("服务器返回了不匹配的会话绑定响应。")
+          }
+          if (attached.configRevision < pending.configRevision || attached.configRevision < 1) {
+            throw PinNodeApiConfigurationException("服务器返回了无效的绑定配置 revision。")
+          }
+          val attachedSession =
+              pending.copy(
+                  route = attached.gatewayRoute,
+                  routes = attached.routes,
+                  wifiRoutes = attached.wifiRoutes,
+                  config = attached.config,
+                  expiresAt = attached.expiresAt,
+                  configRevision = attached.configRevision,
+              )
+          applyConfig(Client(app.applicationScope), attachedSession.config, attachedSession.routes)
+          pending = attachedSession.copy(attached = true)
           activeSession = pending
           persistSession(pending)
           startSessionStateMonitor(pending)
@@ -662,7 +690,7 @@ class RescueSessionManager(private val app: App) {
         else -> throw PinNodeApiConfigurationException("服务器返回了无效的会话停止状态。")
       }
     } catch (error: PinNodeApiException) {
-      if (error.status !in setOf(404, 410)) throw error
+      if (error.status !in setOf(404, 409, 410)) throw error
     }
   }
 
@@ -1251,23 +1279,28 @@ class RescueSessionManager(private val app: App) {
             .StableID
       }
 
-  private suspend fun attachDeviceWithRetry(session: ActiveSession, nodeId: String) {
+  private suspend fun attachDeviceWithRetry(
+      session: ActiveSession,
+      nodeId: String,
+  ): AttachDeviceResponse {
+    var attached: AttachDeviceResponse? = null
     withTimeout(TimeUnit.SECONDS.toMillis(60)) {
-      while (true) {
+      while (attached == null) {
         try {
-          postJson<Unit, AttachDeviceRequest>(
-              "v1/sessions/${session.id}/device",
-              AttachDeviceRequest(nodeId),
-              session.token,
-              session.serverUrl.ifBlank { configuredServerUrl() },
-          )
-          return@withTimeout
+          attached =
+              postJson<AttachDeviceResponse, AttachDeviceRequest>(
+                  "v1/sessions/${session.id}/device",
+                  AttachDeviceRequest(nodeId),
+                  session.token,
+                  session.serverUrl.ifBlank { configuredServerUrl() },
+              )
         } catch (error: PinNodeApiException) {
           if (error.status !in setOf(409, 429, 502)) throw error
           delay(2_000)
         }
       }
     }
+    return attached ?: throw PinNodeApiConfigurationException("服务器没有返回绑定配置。")
   }
 
   private suspend inline fun <reified T, reified B> postJson(

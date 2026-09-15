@@ -20,14 +20,10 @@ tags:
     description: Single-use pairing code creation.
   - name: Admin monitoring
     description: Console snapshots, structured logs, and resumable SSE streams.
+  - name: Admin sessions
+    description: Administrator-only session cleanup and configuration control.
   - name: Sessions
     description: Session provisioning, synchronization, and cleanup.
-x-reserved-extensions:
-  session-config-update-v1:
-    path: /v1/sessions/{sessionId}/config
-    method: PATCH
-    delivery: /v1/sessions/{sessionId}/sync
-    status: reserved-not-implemented
 paths:
   /healthz:
     get:
@@ -278,6 +274,34 @@ paths:
                 type: string
         "4XX":
           $ref: "#/components/responses/Error"
+  /v1/admin/sessions/{sessionId}/stop:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      summary: Stop and clean up a session as an administrator
+      tags: [Admin sessions]
+      operationId: adminStopSession
+      security:
+        - adminCookie: []
+          csrfToken: []
+      description: Uses the existing cleanup lease and exact-device cleanup path. The stop reason is fixed to admin_stop.
+      responses:
+        "200":
+          description: Cleanup completed, or the session was already stopped.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStopSessionResponse"
+        "202":
+          description: Another cleanup worker owns the lease.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStopSessionResponse"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
   /v1/admin/logs/recent:
     get:
       summary: Read recent structured logs from the in-process ring buffer
@@ -406,6 +430,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Session"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
+  /v1/sessions/{sessionId}/config:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    patch:
+      summary: Update a session's desired configuration as an administrator
+      tags: [Admin sessions]
+      operationId: updateSessionConfig
+      security:
+        - adminCookie: []
+          csrfToken: []
+      description: Updates the server-side desired configuration. Active Android clients apply the returned revision through the existing sync endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSessionConfigUpdate"
+      responses:
+        "200":
+          description: Normalized configuration and the new server revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSessionConfigSnapshot"
         "4XX":
           $ref: "#/components/responses/Error"
         "5XX":
@@ -695,25 +747,42 @@ components:
         status: {type: string, const: pending}
         configSummary: {type: string}
         config: {$ref: "#/components/schemas/SessionConfig"}
+        credential: {$ref: "#/components/schemas/TailscaleCredential"}
     AdminConsoleSession:
       type: object
       additionalProperties: true
-      required: [sessionId, status, health, healthReason, config, clientState, tailscaleStatus]
+      required: [sessionId, status, health, healthReason, config, configRevision, appliedConfigRevision, applyState, clientState, tailscaleStatus]
       properties:
         sessionId: {type: string}
         authorizationCode: {type: string}
         authorizationCodeRef: {type: string}
-        status: {type: string, enum: [provisioning, active, cleaning, cleanup_failed]}
+        status: {type: string, enum: [provisioning, active, cleaning, stopped, cleanup_failed]}
         health: {type: string, enum: [Healthy, Warning, Offline, Unknown, Ending, Cleaning]}
         healthReason: {type: string}
         config: {$ref: "#/components/schemas/SessionConfig"}
+        configRevision: {type: integer, minimum: 1}
+        appliedConfigRevision: {type: integer, minimum: 0}
+        applyState: {type: string, enum: [synced, pending_client_sync, pending_client_attach, route_reconcile_pending, cleanup_in_progress, cleanup_failed, unknown]}
+        routes:
+          type: array
+          items: {type: string}
+        wifiRoutes:
+          type: array
+          items: {type: string}
+        clientCapabilities:
+          type: array
+          items: {type: string}
+        routeContextAvailable: {type: boolean}
+        credential: {$ref: "#/components/schemas/TailscaleCredential"}
+        policy: {$ref: "#/components/schemas/SessionPolicy"}
         clientState: {$ref: "#/components/schemas/ClientStateReport"}
         tailscaleStatus: {type: string, enum: [not-attached, unavailable, available]}
         tailscale: {type: object}
+        cleanupError: {type: string}
     AdminConsole:
       type: object
       additionalProperties: false
-      required: [serverTime, eventSequence, pending, sessions, counts]
+      required: [serverTime, eventSequence, pending, sessions, history, counts]
       properties:
         serverTime: {type: string, format: date-time}
         eventSequence: {type: integer, minimum: 0}
@@ -721,6 +790,9 @@ components:
           type: array
           items: {$ref: "#/components/schemas/AdminConsolePending"}
         sessions:
+          type: array
+          items: {$ref: "#/components/schemas/AdminConsoleSession"}
+        history:
           type: array
           items: {$ref: "#/components/schemas/AdminConsoleSession"}
         counts:
@@ -979,9 +1051,12 @@ components:
     AttachedDevice:
       type: object
       additionalProperties: false
-      required: [nodeId, gatewayRoute, routes, wifiRoutes, enabled]
+      required: [sessionId, nodeId, configRevision, config, gatewayRoute, routes, wifiRoutes, expiresAt, enabled]
       properties:
+        sessionId: {type: string}
         nodeId: {type: string}
+        configRevision: {type: integer, minimum: 1}
+        config: {$ref: "#/components/schemas/SessionConfig"}
         gatewayRoute: {type: string}
         routes:
           type: array
@@ -989,6 +1064,7 @@ components:
         wifiRoutes:
           type: array
           items: {type: string}
+        expiresAt: {$ref: "#/components/schemas/NullableTime"}
         enabled: {type: boolean, const: true}
     SessionSyncRequest:
       type: object
@@ -1022,6 +1098,59 @@ components:
           type: array
           items: {type: string}
         expiresAt: {$ref: "#/components/schemas/NullableTime"}
+    SessionPolicy:
+      type: object
+      additionalProperties: false
+      required: [riskLevel, riskReasons]
+      properties:
+        riskLevel: {type: string, enum: [low, elevated, high, unknown]}
+        riskReasons:
+          type: array
+          items: {type: string}
+        requiredClientCapabilities:
+          type: array
+          items: {type: string}
+        optionalClientCapabilities:
+          type: array
+          items: {type: string}
+        requiresApproval: {type: boolean}
+
+    AdminSessionConfigUpdate:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, config]
+      properties:
+        expectedRevision: {type: integer, minimum: 1}
+        config: {$ref: "#/components/schemas/SessionConfigPatch"}
+        confirmHighRisk: {type: boolean, default: false}
+    AdminSessionConfigSnapshot:
+      type: object
+      additionalProperties: false
+      required: [sessionId, status, configRevision, appliedConfigRevision, applyState, config, gatewayRoute, routes, wifiRoutes, expiresAt, policy, routeContextAvailable]
+      properties:
+        sessionId: {type: string}
+        status: {type: string, enum: [provisioning, active, cleaning, stopped, cleanup_failed]}
+        configRevision: {type: integer, minimum: 1}
+        appliedConfigRevision: {type: integer, minimum: 0}
+        applyState: {type: string, enum: [synced, pending_client_sync, pending_client_attach, route_reconcile_pending, cleanup_in_progress, cleanup_failed, unknown]}
+        config: {$ref: "#/components/schemas/SessionConfig"}
+        gatewayRoute: {type: string}
+        routes:
+          type: array
+          items: {type: string}
+        wifiRoutes:
+          type: array
+          items: {type: string}
+        expiresAt: {$ref: "#/components/schemas/NullableTime"}
+        policy: {$ref: "#/components/schemas/SessionPolicy"}
+        routeContextAvailable: {type: boolean}
+    AdminStopSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [sessionId, status]
+      properties:
+        sessionId: {type: string}
+        status: {type: string, enum: [cleaning, stopped, already-stopped]}
     SessionSyncResponse:
       type: object
       additionalProperties: false

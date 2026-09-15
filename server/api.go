@@ -24,6 +24,8 @@ var serverFeatures = []string{
 	"client-logs-v1",
 	"structured-errors-v1",
 	"session-policy-capabilities-v1",
+	"admin-session-control-v1",
+	"session-config-update-v1",
 }
 
 type apiErrorBody struct {
@@ -56,8 +58,11 @@ func retryableAPIError(code string) bool {
 		"tailscale_unavailable",
 		"device_not_ready",
 		"session_cleanup_failed",
+		"session_cleanup_start_failed",
 		"session_create_failed",
 		"session_sync_failed":
+		return true
+	case "tailscale_route_update_failed":
 		return true
 	default:
 		return false

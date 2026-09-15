@@ -336,6 +336,35 @@
     .status-pill[data-status="Offline"] { border-color: var(--danger); color: var(--danger); }
     .monitor-item details { margin-top: 12px; }
     .monitor-item summary { color: var(--primary); cursor: pointer; font-size: 12px; font-weight: 620; }
+    .monitor-item-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+    .monitor-item-actions .secondary-button, .monitor-item-actions .danger-button { min-height: 32px; padding: 6px 10px; font-size: 12px; }
+    .danger-button {
+      min-height: 38px; padding: 8px 14px; border: 1px solid var(--danger); border-radius: 7px;
+      background: transparent; color: var(--danger); cursor: pointer; font-weight: 650;
+    }
+    .danger-button:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+    .danger-button:disabled { cursor: wait; opacity: .6; }
+    .apply-state { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .apply-state[data-state="pending_client_sync"], .apply-state[data-state="pending_client_attach"], .apply-state[data-state="route_reconcile_pending"] { color: var(--warning); }
+    .apply-state[data-state="cleanup_failed"] { color: var(--danger); }
+    .config-context {
+      display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 20px; padding: 12px 15px;
+      border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); color: var(--muted);
+      font-size: 12px;
+    }
+    .config-context strong { color: var(--text); }
+    .config-context .context-warning { color: var(--warning); }
+    .config-risk { margin: 0 0 20px; }
+    .config-risk label { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; color: var(--warning); }
+    .config-risk input { margin-top: 3px; }
+    dialog.stop-dialog { width: min(100% - 32px, 520px); padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 18px 60px rgba(0, 0, 0, .28); }
+    dialog.stop-dialog::backdrop { background: rgba(0, 0, 0, .42); }
+    .dialog-body { padding: 22px; }
+    .dialog-body h2 { margin-bottom: 8px; }
+    .dialog-copy { color: var(--muted); font-size: 13px; }
+    .dialog-copy strong { color: var(--text); }
+    .dialog-confirm { display: flex; align-items: flex-start; gap: 8px; margin-top: 17px; color: var(--warning); font-size: 13px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 21px; }
     .json-block { max-height: 320px; margin: 8px 0 0; padding: 10px; overflow: auto; border-radius: 6px; background: var(--surface); color: var(--muted); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
     .toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 15px 20px; border-bottom: 1px solid var(--border-soft); }
     .toolbar-field { display: grid; gap: 5px; min-width: 130px; color: var(--muted); font-size: 12px; }
@@ -405,6 +434,7 @@
       .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .monitor-columns { grid-template-columns: 1fr; }
       .log-table-wrap { margin: 0 -1px; }
+      .monitor-item-actions .secondary-button, .monitor-item-actions .danger-button { flex: 1 1 auto; }
     }
   </style>
 </head>
@@ -495,6 +525,8 @@
           <section class="card" aria-labelledby="sessions-title">
             <div class="card-header"><h2 id="sessions-title">活动会话与节点</h2><p class="section-hint">健康状态同时参考 PinNode 最近上报和 Tailscale 节点状态；两条链路会分别显示。</p></div>
             <div id="console-sessions" class="monitor-list"><span class="monitor-empty">正在读取…</span></div>
+            <div class="card-header"><h2>历史会话</h2><p class="section-hint">已停止会话只读；可以复制策略配置创建新的会话身份。</p></div>
+            <div id="console-history" class="monitor-list"><span class="monitor-empty">正在读取…</span></div>
           </section>
         </div>
       </section>
@@ -532,11 +564,17 @@
       <form id="config-form" class="content page-view" data-page-view="config">
         <header class="page-header">
           <div>
-            <h1>PinNode 快速配置</h1>
-            <p class="hint">选择用途模板并生成一次性六位授权码；节点设置和退出策略随授权码下发。</p>
+            <h1 id="config-form-title">PinNode 快速配置</h1>
+            <p id="config-form-hint" class="hint">选择用途模板并生成一次性六位授权码；节点设置和退出策略随授权码下发。</p>
           </div>
-          <button class="primary-button" type="submit">生成授权码</button>
+          <button id="config-submit" class="primary-button" type="submit">生成授权码</button>
         </header>
+
+        <div id="config-context" class="config-context" hidden role="status" aria-live="polite"></div>
+        <div id="config-risk" class="notice config-risk" hidden>
+          <span><strong>高风险变更：</strong><span id="config-risk-text"></span></span>
+          <label><input id="confirm-high-risk" type="checkbox">我确认该变更会影响正在运行的会话。</label>
+        </div>
 
         <div class="notice" role="note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6m0-9.25v.5"/></svg>
@@ -630,6 +668,19 @@
     </main>
   </div>
 
+  <dialog id="stop-dialog" class="stop-dialog" aria-labelledby="stop-dialog-title">
+    <form id="stop-dialog-form" method="dialog" class="dialog-body">
+      <h2 id="stop-dialog-title">结束会话</h2>
+      <p id="stop-dialog-copy" class="dialog-copy"></p>
+      <label class="dialog-confirm"><input id="stop-dialog-confirm" type="checkbox">我确认执行服务端清理，并理解 Android 会在下一次同步时发现会话已结束。</label>
+      <div id="stop-dialog-error" class="result-card" data-state="error" hidden role="alert"></div>
+      <div class="dialog-actions">
+        <button id="stop-dialog-cancel" class="secondary-button" type="button">取消</button>
+        <button id="stop-dialog-submit" class="danger-button" type="submit">结束会话</button>
+      </div>
+    </form>
+  </dialog>
+
   <script nonce="{{CSP_NONCE}}">
     const $ = (id) => document.getElementById(id);
     const checked = (id) => $(id).checked;
@@ -661,6 +712,14 @@
     let pendingExpiryRefreshInFlight = false;
     let pendingExpiryRefreshAfter = 0;
     let authRecoveryInFlight = false;
+    let configMode = "new";
+    let selectedSessionId = null;
+    let formRevision = null;
+    let formSource = null;
+    let pendingOperation = "none";
+    let operationToken = 0;
+    let stopDialogItem = null;
+    let stopDialogToken = 0;
     const responsiveSidebar = window.matchMedia("(max-width: 760px)");
     let lastNarrowScreen = responsiveSidebar.matches;
     let lastHandledHash = "";
@@ -843,6 +902,7 @@
       $("app-view").hidden = false;
       document.title = "PinNode 快速配置";
       await loadCredentials();
+      setConfigMode("new");
       if (location.hash === "#console") showPage("console", location.hash);
       else if (location.hash === "#logs") showPage("logs", location.hash);
       else showPage("config");
@@ -901,6 +961,249 @@
       return value ? formatLocalDateTime(value) : "—";
     }
 
+    function defaultFormConfig() {
+      return {
+        networkMode: "cellular", vpnEnabled: true, acceptRoutes: true, acceptDNS: true, tailscaleIp: "",
+        useExitNode: false, exitNodeId: "", exitNodeIp: "", autoExitNode: "", exitNodeAllowLanAccess: false,
+        subnetRouter: true, autoGatewayRoute: true, autoWiFiSubnetRoute: false, advertiseRoutes: [],
+        advertiseExitNode: false, disableSNAT: false, noStatefulFiltering: false, shieldsUp: false,
+        runSSHServer: false, runWebClient: false, postureChecking: false, remoteConfig: false,
+        hostname: "", netfilterMode: "", appConnector: false,
+        exitPolicy: { onAppClose: false, networkChange: "", afterConfigSeconds: 0, afterLoginSeconds: 0, at: "" }
+      };
+    }
+
+    function mergedFormConfig(config) {
+      const defaults = defaultFormConfig();
+      const source = config || {};
+      return Object.assign(defaults, source, {
+        exitPolicy: Object.assign(defaults.exitPolicy, source.exitPolicy || {}),
+        advertiseRoutes: Array.isArray(source.advertiseRoutes) ? [...source.advertiseRoutes] : []
+      });
+    }
+
+    function readFormConfig() {
+      return {
+        networkMode: value("network-mode"), vpnEnabled: checked("vpn-enabled"), acceptRoutes: checked("accept-routes"),
+        acceptDNS: checked("accept-dns"), tailscaleIp: value("tailscale-ip"), useExitNode: checked("use-exit-node"),
+        exitNodeId: value("exit-node-id"), exitNodeIp: value("exit-node-ip"), autoExitNode: value("auto-exit-node"),
+        exitNodeAllowLanAccess: checked("exit-node-lan"), subnetRouter: checked("subnet-router"),
+        autoGatewayRoute: checked("auto-gateway-route"), autoWiFiSubnetRoute: checked("auto-wifi-subnet-route"),
+        advertiseRoutes: value("advertise-routes").split(/[,\n]/).map((item) => item.trim()).filter(Boolean),
+        advertiseExitNode: checked("advertise-exit-node"), disableSNAT: checked("disable-snat"),
+        noStatefulFiltering: checked("no-stateful-filtering"), shieldsUp: checked("shields-up"),
+        runSSHServer: checked("run-ssh"), runWebClient: checked("run-web-client"), postureChecking: checked("posture-checking"),
+        remoteConfig: checked("remote-config"), hostname: value("hostname"), netfilterMode: value("netfilter-mode"),
+        appConnector: checked("app-connector"),
+        exitPolicy: {
+          onAppClose: checked("exit-on-app-close"), networkChange: value("network-exit"),
+          afterConfigSeconds: numberValue("after-config"), afterLoginSeconds: numberValue("after-login"),
+          at: value("exit-at") ? new Date(value("exit-at")).toISOString() : ""
+        }
+      };
+    }
+
+    function localDateTimeValue(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const pad = (number) => String(number).padStart(2, "0");
+      return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
+          "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
+    }
+
+    function fillFormConfig(config) {
+      const current = mergedFormConfig(config);
+      $("network-mode").value = current.networkMode;
+      $("vpn-enabled").checked = Boolean(current.vpnEnabled);
+      $("accept-routes").checked = Boolean(current.acceptRoutes);
+      $("accept-dns").checked = Boolean(current.acceptDNS);
+      $("tailscale-ip").value = current.tailscaleIp || "";
+      $("use-exit-node").checked = Boolean(current.useExitNode);
+      $("exit-node-id").value = current.exitNodeId || "";
+      $("exit-node-ip").value = current.exitNodeIp || "";
+      $("auto-exit-node").value = current.autoExitNode || "";
+      $("exit-node-lan").checked = Boolean(current.exitNodeAllowLanAccess);
+      $("subnet-router").checked = Boolean(current.subnetRouter);
+      $("auto-gateway-route").checked = Boolean(current.autoGatewayRoute);
+      $("auto-wifi-subnet-route").checked = Boolean(current.autoWiFiSubnetRoute);
+      $("advertise-routes").value = current.advertiseRoutes.join("\n");
+      $("advertise-exit-node").checked = Boolean(current.advertiseExitNode);
+      $("disable-snat").checked = Boolean(current.disableSNAT);
+      $("no-stateful-filtering").checked = Boolean(current.noStatefulFiltering);
+      $("shields-up").checked = Boolean(current.shieldsUp);
+      $("run-ssh").checked = Boolean(current.runSSHServer);
+      $("run-web-client").checked = Boolean(current.runWebClient);
+      $("posture-checking").checked = Boolean(current.postureChecking);
+      $("remote-config").checked = Boolean(current.remoteConfig);
+      $("hostname").value = current.hostname || "";
+      $("netfilter-mode").value = current.netfilterMode || "";
+      $("app-connector").checked = Boolean(current.appConnector);
+      $("exit-on-app-close").checked = Boolean(current.exitPolicy.onAppClose);
+      $("network-exit").value = current.exitPolicy.networkChange || "";
+      $("after-config").value = String(Number(current.exitPolicy.afterConfigSeconds) || 0);
+      $("after-login").value = String(Number(current.exitPolicy.afterLoginSeconds) || 0);
+      $("exit-at").value = localDateTimeValue(current.exitPolicy.at);
+    }
+
+    function copySafeConfig(config) {
+      const copied = mergedFormConfig(config);
+      copied.tailscaleIp = "";
+      copied.hostname = "";
+      copied.exitPolicy.at = "";
+      return copied;
+    }
+
+    function formSubmitButtons() {
+      return [...document.querySelectorAll("#config-form button[type=submit]")];
+    }
+
+    function setConfigRisk(policy, visible = false) {
+      const risk = policy || {};
+      const high = visible || risk.riskLevel === "high";
+      $("config-risk").hidden = !high;
+      $("confirm-high-risk").checked = false;
+      $("config-risk-text").textContent = Array.isArray(risk.riskReasons) && risk.riskReasons.length
+          ? "原因：" + risk.riskReasons.join("、") : "服务端将按高风险策略处理。";
+    }
+
+    function setConfigContext(source, mode) {
+      const context = $("config-context");
+      context.replaceChildren();
+      if (!source || mode === "new") {
+        context.hidden = true;
+        return;
+      }
+      context.hidden = false;
+      const sessionID = source.sessionId || source.codeRef || "—";
+      context.append(element("span", "来源："));
+      context.append(element("strong", sessionID));
+      if (mode === "edit") {
+        context.append(element("span", "状态：" + (source.status || "—")));
+        context.append(element("span", "配置 revision：" + (source.configRevision ?? "—")));
+        context.append(element("span", "凭据：" + (source.credential?.name || "不可用")));
+        if (source.routeContextAvailable === false) {
+          context.append(element("span", "历史数据缺少原始 Wi-Fi 子网信息，不能安全开启或重算 Wi-Fi 子网路由。", "context-warning"));
+        }
+        context.append(element("span", "服务端保存后，客户端将在下一次既有同步中应用。"));
+      } else {
+        context.append(element("span", "已复制策略配置；本次创建会产生新的配对码和新的会话身份。"));
+        context.append(element("span", "Tailscale IP、hostname、绝对退出时间已重置。"));
+      }
+    }
+
+    function setConfigMode(mode, source = null) {
+      configMode = mode;
+      formSource = source;
+      selectedSessionId = mode === "edit" ? (source?.sessionId || null) : null;
+      formRevision = mode === "edit" ? Number(source?.configRevision) || null : null;
+      operationToken++;
+      fillFormConfig(mode === "copy" ? copySafeConfig(source?.config) : (source?.config || defaultFormConfig()));
+      $("config-form-title").textContent = mode === "edit" ? "编辑会话配置" : (mode === "copy" ? "复制策略到新会话" : "PinNode 快速配置");
+      $("config-form-hint").textContent = mode === "edit"
+          ? "修改服务端保存的期望配置；活动客户端会在下一次同步时原子应用新 revision。"
+          : (mode === "copy" ? "只复制策略字段；生成配对码后才会创建新的会话身份。" : "选择用途模板并生成一次性六位授权码；节点设置和退出策略随授权码下发。");
+      formSubmitButtons().forEach((button) => {
+        button.textContent = mode === "edit" ? "保存配置" : "生成授权码";
+      });
+      $("credential-select").disabled = mode === "edit";
+      $("credential-message").textContent = mode === "edit" ? "编辑会话时凭据固定为当前会话凭据。" : "";
+      if (mode !== "edit" && source?.credential?.id) {
+        $("credential-select").value = source.credential.id;
+        if ($( "credential-select").value !== source.credential.id) {
+          $("credential-message").dataset.state = "error";
+          $("credential-message").textContent = "来源凭据已不存在或不可用，请选择一个可用凭据。";
+        }
+      }
+      $("tailscale-ip").disabled = mode === "edit" && source?.status === "active";
+      setConfigContext(source, mode);
+      setConfigRisk(source?.policy, false);
+      if (mode === "new") {
+        $("credential-select").disabled = false;
+        $("tailscale-ip").disabled = false;
+      }
+      showResult("", "");
+      result.hidden = true;
+    }
+
+    function openConfigMode(mode, source) {
+      setConfigMode(mode, source);
+      showPage("config", "#top");
+      $("config-form-title").focus?.();
+    }
+
+    function stateLabel(state) {
+      return ({
+        synced: "已同步", pending_client_sync: "等待客户端下一次同步",
+        pending_client_attach: "等待客户端绑定", cleanup_in_progress: "清理中",
+        cleanup_failed: "清理失败，可重试", route_reconcile_pending: "正在恢复控制面路由", unknown: "状态未知"
+      })[state] || state || "状态未知";
+    }
+
+    function sessionActionButton(label, className, disabled, handler) {
+      const button = element("button", label, className);
+      button.type = "button";
+      button.disabled = Boolean(disabled);
+      if (!button.disabled) button.addEventListener("click", handler);
+      return button;
+    }
+
+    function renderSessionCard(item, history = false) {
+      const tailscale = item.tailscale || {};
+      const clientState = item.clientState || {};
+      const config = item.config || {};
+      const title = tailscale.hostname || tailscale.name || item.provisioningHostname || item.sessionId;
+      const card = element("article", undefined, "monitor-item");
+      const header = element("div", undefined, "monitor-item-header");
+      header.append(element("strong", title, "monitor-item-title"));
+      header.append(statusPill(history ? (item.status || "stopped") : item.health));
+      card.append(header);
+      const meta = element("div", undefined, "monitor-item-meta");
+      meta.append(element("span", "会话 " + (item.sessionId || "—")));
+      meta.append(document.createTextNode(" · " + (item.healthReason || "")));
+      card.append(meta);
+      const details = element("dl");
+      appendDetail(details, "授权 PIN", item.authorizationCode || "不可用");
+      appendDetail(details, "授权码引用", item.authorizationCodeRef);
+      appendDetail(details, "PinNode 状态", item.status);
+      appendDetail(details, "客户端应用", tailscale.clientVersion || "—");
+      appendDetail(details, "PinNode 最近上报", formatOptionalDate(item.lastSeenAt));
+      appendDetail(details, "设备绑定", formatOptionalDate(item.connectedAt));
+      appendDetail(details, "客户端后端", clientState.backendState);
+      appendDetail(details, "Tailscale 路径", clientState.tailscalePath);
+      appendDetail(details, "网络接口", clientState.interfaceName);
+      appendDetail(details, "客户端健康", listText(clientState.health));
+      appendDetail(details, "Tailscale 状态", item.tailscaleStatus);
+      appendDetail(details, "Tailscale 在线", tailscale.online === undefined ? "—" : (tailscale.online ? "是" : "否"));
+      appendDetail(details, "Tailscale 地址", listText(tailscale.addresses));
+      appendDetail(details, "已启用路由", listText(item.routes));
+      appendDetail(details, "出口节点", config.advertiseExitNode ? "发布 Exit Node" : (config.useExitNode ? "使用 Exit Node" : "未启用"));
+      appendDetail(details, "配置 revision", item.configRevision + " / 已应用 " + item.appliedConfigRevision);
+      appendDetail(details, "应用状态", stateLabel(item.applyState));
+      appendDetail(details, "凭据", item.credential?.name || "不可用");
+      if (item.cleanupError) appendDetail(details, "清理错误摘要", item.cleanupError);
+      card.append(details);
+      const applyState = element("div", stateLabel(item.applyState), "apply-state");
+      applyState.dataset.state = item.applyState || "unknown";
+      card.append(applyState);
+      const configDetails = element("details");
+      configDetails.append(element("summary", "查看完整只读配置与状态"));
+      configDetails.append(jsonBlock({
+        config: item.config, clientState: item.clientState, tailscale: tailscale,
+        routes: item.routes, wifiRoutes: item.wifiRoutes, policy: item.policy,
+        clientCapabilities: item.clientCapabilities, routeContextAvailable: item.routeContextAvailable
+      }));
+      card.append(configDetails);
+      const actions = element("div", undefined, "monitor-item-actions");
+      actions.append(sessionActionButton("编辑配置", "secondary-button", history || item.applyState === "route_reconcile_pending" || !["provisioning", "active"].includes(item.status), () => openConfigMode("edit", item)));
+      actions.append(sessionActionButton("复制到新会话", "secondary-button", false, () => openConfigMode("copy", item)));
+      const stopLabel = item.status === "cleanup_failed" ? "重试清理" : (item.status === "cleaning" ? "清理中" : "结束会话");
+      const stopDisabled = history || item.status === "cleaning" || item.status === "stopped";
+      actions.append(sessionActionButton(stopLabel, "danger-button", stopDisabled, () => openStopDialog(item)));
+      card.append(actions);
+      return card;
+    }
+
     function renderConsole(payload) {
       consoleData = payload;
       consoleSequence = Number(payload.eventSequence) || 0;
@@ -937,11 +1240,15 @@
           appendDetail(details, "有效期至", formatOptionalDate(item.expiresAt));
           appendDetail(details, "诊断引用", item.codeRef);
           appendDetail(details, "配置摘要", item.configSummary);
+          appendDetail(details, "凭据", item.credential?.name || "不可用");
           card.append(details);
           const configDetails = element("details");
           configDetails.append(element("summary", "查看完整只读配置"));
           configDetails.append(jsonBlock(item.config));
           card.append(configDetails);
+          const actions = element("div", undefined, "monitor-item-actions");
+          actions.append(sessionActionButton("复制到新会话", "secondary-button", false, () => openConfigMode("copy", item)));
+          card.append(actions);
           pendingContainer.append(card);
         }
       }
@@ -951,52 +1258,85 @@
       if (!payload.sessions || !payload.sessions.length) {
         sessionsContainer.append(element("span", "没有活动会话。", "monitor-empty"));
       } else {
-        for (const item of payload.sessions) {
-          const tailscale = item.tailscale || {};
-          const clientState = item.clientState || {};
-          const config = item.config || {};
-          const title = tailscale.hostname || tailscale.name || item.provisioningHostname || item.sessionId;
-          const card = element("article", undefined, "monitor-item");
-          const header = element("div", undefined, "monitor-item-header");
-          header.append(element("strong", title, "monitor-item-title"));
-          header.append(statusPill(item.health));
-          card.append(header);
-          const meta = element("div", undefined, "monitor-item-meta");
-          meta.append(element("span", "会话 " + (item.sessionId || "—")));
-          meta.append(document.createTextNode(" · " + (item.healthReason || "")));
-          card.append(meta);
-          const details = element("dl");
-          appendDetail(details, "授权 PIN", item.authorizationCode || "不可用");
-          appendDetail(details, "授权码引用", item.authorizationCodeRef);
-          appendDetail(details, "PinNode 状态", item.status);
-          appendDetail(details, "PinNode 最近上报", formatOptionalDate(item.lastSeenAt));
-          appendDetail(details, "设备绑定", formatOptionalDate(item.connectedAt));
-          appendDetail(details, "客户端后端", clientState.backendState);
-          appendDetail(details, "Tailscale 路径", clientState.tailscalePath);
-          appendDetail(details, "网络接口", clientState.interfaceName);
-          appendDetail(details, "客户端健康", listText(clientState.health));
-          appendDetail(details, "Tailscale 状态", item.tailscaleStatus);
-          appendDetail(details, "Tailscale 在线", tailscale.online === undefined ? "—" : (tailscale.online ? "是" : "否"));
-          appendDetail(details, "Tailscale 地址", listText(tailscale.addresses));
-          appendDetail(details, "已启用路由", listText(item.routes));
-          appendDetail(details, "出口节点", config.advertiseExitNode ? "发布 Exit Node" : (config.useExitNode ? "使用 Exit Node" : "未启用"));
-          appendDetail(details, "配置 revision", item.configRevision + " / 已应用 " + item.appliedConfigRevision);
-          card.append(details);
-          const configDetails = element("details");
-          configDetails.append(element("summary", "查看完整只读配置与状态"));
-          configDetails.append(jsonBlock({
-            config: item.config,
-            clientState: item.clientState,
-            tailscale: tailscale,
-            routes: item.routes,
-            wifiRoutes: item.wifiRoutes,
-          }));
-          card.append(configDetails);
-          sessionsContainer.append(card);
-        }
+        for (const item of payload.sessions) sessionsContainer.append(renderSessionCard(item));
+      }
+
+      const historyContainer = $("console-history");
+      historyContainer.replaceChildren();
+      if (!payload.history || !payload.history.length) {
+        historyContainer.append(element("span", "没有已停止的历史会话。", "monitor-empty"));
+      } else {
+        for (const item of payload.history) historyContainer.append(renderSessionCard(item, true));
       }
       updatePendingCountdowns();
     }
+
+    function closeStopDialog() {
+      const dialog = $("stop-dialog");
+      if (dialog.open && dialog.close) dialog.close();
+      else dialog.hidden = true;
+      stopDialogItem = null;
+    }
+
+    function openStopDialog(item) {
+      stopDialogItem = item;
+      stopDialogToken = ++operationToken;
+      const shortID = String(item.sessionId || "").slice(-6) || "未知";
+      const device = item.tailscale?.hostname || item.provisioningHostname || "尚未绑定";
+      $("stop-dialog-copy").textContent = "会话 " + shortID + " 当前为 " + (item.status || "未知") + "，设备为 " + device + "。将撤销受管路由、删除精确设备并撤销 auth key；Android 会在下一次同步时进行本地清理。";
+      $("stop-dialog-confirm").checked = false;
+      $("stop-dialog-error").hidden = true;
+      $("stop-dialog-submit").disabled = false;
+      $("stop-dialog-cancel").disabled = false;
+      const dialog = $("stop-dialog");
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.hidden = false;
+      setTimeout(() => $("stop-dialog-confirm").focus(), 0);
+    }
+
+    $("stop-dialog-cancel").addEventListener("click", closeStopDialog);
+    $("stop-dialog").addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeStopDialog();
+    });
+    $("stop-dialog-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!stopDialogItem || !$("stop-dialog-confirm").checked) {
+        $("stop-dialog-error").hidden = false;
+        $("stop-dialog-error").textContent = "请先勾选确认，避免误结束错误的会话。";
+        return;
+      }
+      const item = stopDialogItem;
+      const token = stopDialogToken;
+      pendingOperation = "stop";
+      $("stop-dialog-submit").disabled = true;
+      $("stop-dialog-cancel").disabled = true;
+      try {
+        const response = await fetch("/v1/admin/sessions/" + encodeURIComponent(item.sessionId) + "/stop", {
+          method: "POST", headers: { "X-CSRF-Token": csrfToken }
+        });
+        if (response.status === 401) {
+          closeStopDialog();
+          await initialize();
+          return;
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error?.message || "结束会话失败");
+        if (token !== stopDialogToken || token !== operationToken) return;
+        closeStopDialog();
+        showPage("console", "#console");
+        await loadConsole();
+      } catch (error) {
+        if (token === stopDialogToken) {
+          $("stop-dialog-error").hidden = false;
+          $("stop-dialog-error").textContent = error.message || "结束会话失败，请稍后重试。";
+          $("stop-dialog-submit").disabled = false;
+          $("stop-dialog-cancel").disabled = false;
+        }
+      } finally {
+        pendingOperation = "none";
+      }
+    });
 
     function updatePendingCountdowns() {
       let expired = false;
@@ -1451,66 +1791,73 @@
     $("config-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const credentialID = value("credential-select");
-      if (!credentialID) {
+      if (configMode !== "edit" && !credentialID) {
         showResult("error", "请先添加并选择一个 Tailscale 管理凭据。");
         return;
       }
-      showResult("loading", "正在生成授权码…");
-      submitButtons.forEach((button) => { button.disabled = true; });
-      const routes = value("advertise-routes").split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
-      const body = {
-        credentialId: credentialID,
-        config: {
-          networkMode: value("network-mode"),
-          vpnEnabled: checked("vpn-enabled"),
-          acceptRoutes: checked("accept-routes"),
-          acceptDNS: checked("accept-dns"),
-          tailscaleIp: value("tailscale-ip"),
-          useExitNode: checked("use-exit-node"),
-          exitNodeId: value("exit-node-id"),
-          exitNodeIp: value("exit-node-ip"),
-          autoExitNode: value("auto-exit-node"),
-          exitNodeAllowLanAccess: checked("exit-node-lan"),
-          subnetRouter: checked("subnet-router"),
-          autoGatewayRoute: checked("auto-gateway-route"),
-          autoWiFiSubnetRoute: checked("auto-wifi-subnet-route"),
-          advertiseRoutes: routes,
-          advertiseExitNode: checked("advertise-exit-node"),
-          disableSNAT: checked("disable-snat"),
-          noStatefulFiltering: checked("no-stateful-filtering"),
-          shieldsUp: checked("shields-up"),
-          runSSHServer: checked("run-ssh"),
-          runWebClient: checked("run-web-client"),
-          postureChecking: checked("posture-checking"),
-          remoteConfig: checked("remote-config"),
-          hostname: value("hostname"),
-          netfilterMode: value("netfilter-mode"),
-          appConnector: checked("app-connector"),
-          exitPolicy: {
-            onAppClose: checked("exit-on-app-close"),
-            networkChange: value("network-exit"),
-            afterConfigSeconds: numberValue("after-config"),
-            afterLoginSeconds: numberValue("after-login"),
-            at: value("exit-at") ? new Date(value("exit-at")).toISOString() : ""
-          }
-        }
-      };
+      if (pendingOperation !== "none") return;
+      const draft = readFormConfig();
+      const token = ++operationToken;
+      pendingOperation = configMode === "edit" ? "save" : "create";
+      showResult("loading", configMode === "edit" ? "正在保存服务端配置…" : "正在生成授权码…");
+      formSubmitButtons().forEach((button) => { button.disabled = true; });
       try {
-        const response = await fetch("/v1/pairing-codes", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRF-Token": csrfToken
-          },
-          body: JSON.stringify(body)
-        });
+        let response;
+        if (configMode === "edit") {
+          const sessionID = selectedSessionId;
+          const revision = formRevision;
+          if (!sessionID || revision === null) throw new Error("编辑上下文已失效，请从 Console 重新打开。");
+          response = await fetch("/v1/sessions/" + encodeURIComponent(sessionID) + "/config", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+            body: JSON.stringify({ expectedRevision: revision, config: draft, confirmHighRisk: $("confirm-high-risk").checked })
+          });
+        } else {
+          response = await fetch("/v1/pairing-codes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+            body: JSON.stringify({ credentialId: credentialID, config: draft })
+          });
+        }
+        if (response.status === 401) {
+          await initialize();
+          return;
+        }
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error?.message || ("HTTP " + response.status));
-        showResult("success", "授权码\n" + payload.code + "\n\n有效期至（本地时间）：" + formatLocalDateTime(payload.expiresAt) + "\n请把六位数字交给手机使用者；该 code 只能兑换一次。");
+        if (!response.ok) {
+          if (configMode === "edit" && payload.error?.code === "high_risk_confirmation_required") {
+            setConfigRisk({ riskLevel: "high", riskReasons: payload.riskReasons || [] }, true);
+          }
+          if (configMode === "edit" && payload.error?.code === "config_revision_conflict" &&
+              payload.sessionId === selectedSessionId) {
+            const unsavedDraft = draft;
+            formRevision = Number(payload.configRevision) || formRevision;
+            formSource = Object.assign({}, formSource || {}, payload, { config: payload.config });
+            fillFormConfig(unsavedDraft);
+            setConfigContext(formSource, "edit");
+            showResult("error", "服务端 revision 已变化，已刷新为 revision " + formRevision + "；当前表单仍保留未保存草稿，请确认后再次保存。");
+            return;
+          }
+          throw new Error(payload.error?.message || ("HTTP " + response.status));
+        }
+        if (token !== operationToken) return;
+        if (configMode === "edit") {
+          formRevision = Number(payload.configRevision) || formRevision;
+          formSource = Object.assign({}, formSource || {}, payload, { sessionId: selectedSessionId, config: payload.config });
+          fillFormConfig(payload.config);
+          setConfigContext(formSource, "edit");
+          setConfigRisk(payload.policy, false);
+          showResult("success", "配置已写入服务端。revision " + payload.configRevision + " · " + stateLabel(payload.applyState) + "。设备只有在下一次既有同步并成功应用后，appliedConfigRevision 才会追平。");
+          showPage("console", "#console");
+          await loadConsole();
+        } else {
+          showResult("success", "授权码\n" + payload.code + "\n\n有效期至（本地时间）：" + formatLocalDateTime(payload.expiresAt) + "\n请把六位数字交给手机使用者；该 code 只能兑换一次。");
+        }
       } catch (error) {
-        showResult("error", "生成失败：" + error.message);
+        showResult("error", (configMode === "edit" ? "保存失败：" : "生成失败：") + (error.message || error));
       } finally {
-        submitButtons.forEach((button) => { button.disabled = false; });
+        pendingOperation = "none";
+        formSubmitButtons().forEach((button) => { button.disabled = false; });
       }
     });
 

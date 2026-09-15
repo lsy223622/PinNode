@@ -143,6 +143,9 @@ type adminConsoleTestResponse struct {
 		ClientState map[string]any `json:"clientState"`
 		Tailscale   map[string]any `json:"tailscale"`
 	} `json:"sessions"`
+	History []struct {
+		ID string `json:"sessionId"`
+	} `json:"history"`
 }
 
 func TestAdminConsoleCountsEveryNonHealthyStateAsAttention(t *testing.T) {
