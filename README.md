@@ -167,7 +167,7 @@ The code defaults the SQLite path to:
 data/pinnode.db
 ```
 
-The instance root key is placed next to that database as `pinnode.secret` unless `PINNODE_SECRET_PATH` or `PINNODE_INSTANCE_KEY` supplies another source.
+The `pinnode.secret` file next to the database is the authoritative instance-root-key source; once it exists, leftover secret environment variables cannot replace it.
 
 For a service deployment, an absolute state directory is easier to back up and permission explicitly:
 
@@ -424,8 +424,8 @@ PinNode Server reads its configuration from process environment variables.
 | `PINNODE_TAILSCALE_BASE_URL` | `https://api.tailscale.com` | Tailscale API base URL. |
 | `PINNODE_TAILNET` | `-` in code; env template uses `example.com` | Target tailnet identifier. Set this for a real deployment. |
 | `PINNODE_DATABASE_PATH` | `data/pinnode.db` | SQLite path. |
-| `PINNODE_SECRET_PATH` | defaults beside the database as `pinnode.secret` | File containing the instance root key. |
-| `PINNODE_INSTANCE_KEY` | unset | Optional base64-encoded 32-byte instance root key supplied directly by environment. |
+| `PINNODE_SECRET_PATH` | defaults beside the database as `pinnode.secret` | Selects an instance-root-key file only when the database-adjacent key file does not exist. |
+| `PINNODE_INSTANCE_KEY` | unset | Supplies a base64-encoded 32-byte instance root key only when the database-adjacent key file does not exist. |
 | `PINNODE_CODE_TTL` | `5m` | Pairing-code lifetime. |
 | `PINNODE_PROVISIONING_TTL` | `10m` | Provisioning/auth-key window. Minimum: 1 minute. |
 | `PINNODE_SYNC_LEASE_TTL` | `5m` | Session sync/cleanup lease. Minimum: 2 minutes. |
@@ -434,7 +434,7 @@ PinNode Server reads its configuration from process environment variables.
 | `PINNODE_ALLOW_REMOTE_SETUP` | `false` | Permits first-time setup from non-loopback clients when enabled. |
 | `PINNODE_TRUSTED_PROXY_CIDRS` | empty in code; env template suggests `127.0.0.1/32,::1/128` | Sources whose forwarded client/scheme metadata the server may trust. |
 
-`PINNODE_CREDENTIAL_KEY` and `PINNODE_CODE_PEPPER` also exist as lower-level secret overrides. Normal deployments can let the instance root key derive separate credential-encryption and PIN-HMAC subkeys instead.
+`PINNODE_CREDENTIAL_KEY` and `PINNODE_CODE_PEPPER` are legacy lower-level secret overrides and are only consulted when the database-adjacent instance-key file does not exist. Normal deployments should let the instance root key derive separate credential-encryption and PIN-HMAC subkeys instead.
 
 ## Data and instance keys
 
@@ -444,7 +444,7 @@ The database stores administrator/session state, encrypted named Tailscale crede
 
 ### Instance root key
 
-When `PINNODE_INSTANCE_KEY` is absent, the server loads or creates a 32-byte root key from `PINNODE_SECRET_PATH`. The default path is `pinnode.secret` beside a normal database file.
+The server first loads a 32-byte root key from `pinnode.secret` beside a normal database file. Once that file exists, it is the fixed source for the instance; if it is invalid, startup fails without falling back to environment variables. Only a first deployment with no database-adjacent key file selects a source from `PINNODE_INSTANCE_KEY`, `PINNODE_SECRET_PATH`, or the default path, creating a file when needed.
 
 The server derives separate subkeys with HKDF-SHA-256 for:
 

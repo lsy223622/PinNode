@@ -167,7 +167,7 @@ cd PinNode
 data/pinnode.db
 ```
 
-没有显式设置 `PINNODE_SECRET_PATH` 或 `PINNODE_INSTANCE_KEY` 时，实例根密钥会放在数据库旁边的 `pinnode.secret`。
+数据库旁边的 `pinnode.secret` 是实例根密钥的权威来源；只要该文件存在，残留的密钥环境变量不会覆盖它。
 
 长期服务更适合使用明确的绝对路径，例如：
 
@@ -424,8 +424,8 @@ PinNode Server 直接读取进程环境变量。
 | `PINNODE_TAILSCALE_BASE_URL` | `https://api.tailscale.com` | Tailscale API base URL。 |
 | `PINNODE_TAILNET` | 代码 fallback 为 `-`；`.env.example` 使用 `example.com` | 目标 tailnet；真实部署应显式设置。 |
 | `PINNODE_DATABASE_PATH` | `data/pinnode.db` | SQLite 路径。 |
-| `PINNODE_SECRET_PATH` | 默认位于数据库旁的 `pinnode.secret` | 实例根密钥文件。 |
-| `PINNODE_INSTANCE_KEY` | 未设置 | 可直接注入 base64 编码的 32-byte instance root key。 |
+| `PINNODE_SECRET_PATH` | 默认位于数据库旁的 `pinnode.secret` | 仅在数据库旁的密钥文件尚不存在时指定实例根密钥文件。 |
+| `PINNODE_INSTANCE_KEY` | 未设置 | 仅在数据库旁的密钥文件尚不存在时注入 base64 编码的 32-byte instance root key。 |
 | `PINNODE_CODE_TTL` | `5m` | PIN 有效期。 |
 | `PINNODE_PROVISIONING_TTL` | `10m` | provisioning/auth-key 时间窗口；最小 1 分钟。 |
 | `PINNODE_SYNC_LEASE_TTL` | `5m` | session sync/cleanup lease；最小 2 分钟。 |
@@ -434,7 +434,7 @@ PinNode Server 直接读取进程环境变量。
 | `PINNODE_ALLOW_REMOTE_SETUP` | `false` | 是否允许非 loopback 来源完成首次 setup。 |
 | `PINNODE_TRUSTED_PROXY_CIDRS` | 代码 fallback 为空；`.env.example` 建议 `127.0.0.1/32,::1/128` | 允许提供可信 forwarded client/scheme 信息的代理来源。 |
 
-另外还有 `PINNODE_CREDENTIAL_KEY` 和 `PINNODE_CODE_PEPPER` 两个底层 secret override。普通部署可以直接使用实例根密钥，由 HKDF 分别派生 credential encryption 和 PIN HMAC 的子密钥。
+另外还有 `PINNODE_CREDENTIAL_KEY` 和 `PINNODE_CODE_PEPPER` 两个旧版底层 secret override；它们仅在数据库旁的实例密钥文件不存在时用于兼容旧部署。普通部署应直接使用实例根密钥，由 HKDF 分别派生 credential encryption 和 PIN HMAC 的子密钥。
 
 ## 数据与实例密钥
 
@@ -444,7 +444,7 @@ PinNode Server 直接读取进程环境变量。
 
 ### 实例根密钥
 
-没有设置 `PINNODE_INSTANCE_KEY` 时，Server 会从 `PINNODE_SECRET_PATH` 加载 32-byte root key；文件不存在则在首次启动时生成。普通数据库路径下，默认 secret 是同目录的 `pinnode.secret`。
+Server 优先从普通数据库路径旁的 `pinnode.secret` 加载 32-byte root key。该文件一旦存在即固定为实例密钥来源；如果文件损坏，Server 会拒绝启动而不会回退到环境变量。只有首次部署且该文件不存在时，才会按 `PINNODE_INSTANCE_KEY`、`PINNODE_SECRET_PATH` 或默认路径选择密钥来源，并在需要时生成文件。
 
 Server 使用 HKDF-SHA-256 派生不同用途的子密钥：
 

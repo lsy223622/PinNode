@@ -16,12 +16,15 @@ go run .
 
 服务端只读取进程环境，不会自行解析 `.env`；直接执行 `go run .` 前必须先导入这些变量。
 现有系统环境的值应优先于本地文件，生产部署不要依赖仓库目录中的 `.env`。
-首次启动会在 `PINNODE_SECRET_PATH`（默认 `data/pinnode.secret`）创建 32 字节实例根密钥，
-后续启动复用同一文件。服务端用 HKDF-SHA-256 从它分别派生凭据加密和 PIN HMAC 子密钥。
-容器或正式密钥管理系统可改用 base64 编码的 `PINNODE_INSTANCE_KEY`，此时不会创建文件。
-根密钥丢失或更换会使数据库中已有的 Tailscale 凭据无法解密；必须与 SQLite 分开备份。
-旧部署的 `PINNODE_CREDENTIAL_KEY` 和 `PINNODE_CODE_PEPPER` 仍作为对应子密钥覆盖项读取，
-两项均存在时不会额外创建实例密钥文件。
+首次启动会在数据库旁的 `pinnode.secret`（默认 `data/pinnode.secret`）创建 32 字节实例根密钥，
+后续启动复用同一文件。只要这个数据库旁的密钥文件存在，它就是该实例的唯一权威来源；即使进程
+环境中残留 `PINNODE_SECRET_PATH`、`PINNODE_INSTANCE_KEY`、`PINNODE_CREDENTIAL_KEY` 或
+`PINNODE_CODE_PEPPER`，也不会覆盖它。文件存在但损坏时服务端会拒绝启动，不会回退到环境密钥。
+服务端用 HKDF-SHA-256 从根密钥分别派生凭据加密和 PIN HMAC 子密钥。全新部署在数据库旁还没有
+密钥文件时，容器或正式密钥管理系统仍可使用 base64 编码的 `PINNODE_INSTANCE_KEY`，也可使用
+`PINNODE_SECRET_PATH` 指定文件；旧部署的 `PINNODE_CREDENTIAL_KEY` 和 `PINNODE_CODE_PEPPER`
+仅在权威密钥文件不存在时作为兼容性覆盖项读取。根密钥丢失或更换会使数据库中已有的 Tailscale
+凭据无法解密；必须与 SQLite 分开备份。
 
 正式构建默认监听 `:6633`；Debug 构建使用 `go run -tags debug .` 启动，默认监听
 `:6634`，因此两者可以同时运行。设置 `PINNODE_LISTEN_ADDR` 可覆盖任一默认值。

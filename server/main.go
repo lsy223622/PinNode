@@ -28,6 +28,9 @@ func main() {
 	}
 	defer store.Close()
 	service := NewService(config, store, NewTailscaleClient(config), log.Default())
+	if err := service.validateStoredCredentials(); err != nil {
+		log.Fatalf("启动凭据完整性检查失败: %v", err)
+	}
 	httpServer := &http.Server{
 		Addr:              config.ListenAddr,
 		Handler:           service.Handler(),

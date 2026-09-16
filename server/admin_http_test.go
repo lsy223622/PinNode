@@ -202,6 +202,32 @@ func TestOAuthClientRequiresPinNodeScopes(t *testing.T) {
 	}
 }
 
+func TestValidateStoredCredentialsRejectsWrongInstanceKey(t *testing.T) {
+	config := testServiceConfig()
+	store := NewStore()
+	defer store.Close()
+
+	wrongCipher, err := NewCredentialCipher([]byte("fedcba9876543210fedcba9876543210"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := wrongCipher.Seal("stored-credential", fakeTailscaleKey("api", "wrong-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutTailscaleCredential(TailscaleCredential{
+		ID: "stored-credential", Name: "错误密钥", Kind: TailscaleCredentialAPIToken,
+		Ciphertext: ciphertext, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewService(config, store, &fakeTailscale{}, nil)
+	if err := service.validateStoredCredentials(); err == nil || !strings.Contains(err.Error(), "当前实例密钥") {
+		t.Fatalf("错误实例密钥没有在启动检查阶段被拒绝: %v", err)
+	}
+}
+
 func TestAdminWriteRequiresCSRF(t *testing.T) {
 	config := testServiceConfig()
 	store := NewStore()

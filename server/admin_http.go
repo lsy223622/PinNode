@@ -463,6 +463,34 @@ func publicTailscaleCredential(credential TailscaleCredential) map[string]any {
 	}
 }
 
+func (s *Service) validateStoredCredentials() error {
+	credentials, err := s.store.ListTailscaleCredentials()
+	if err != nil {
+		return fmt.Errorf("读取已保存的 Tailscale 凭据失败: %w", err)
+	}
+	for _, credential := range credentials {
+		plaintext, err := s.cipher.Open(credential.ID, credential.Ciphertext)
+		if err != nil {
+			return fmt.Errorf("无法使用当前实例密钥读取已保存的 Tailscale 凭据 credentialRef=%s: %w",
+				diagnosticIdentifier(credential.ID), err)
+		}
+		switch credential.Kind {
+		case "", TailscaleCredentialAPIToken:
+		case TailscaleCredentialOAuthClient:
+			var oauthCredential oauthClientSecret
+			if err := json.Unmarshal([]byte(plaintext), &oauthCredential); err != nil ||
+				oauthCredential.ClientID == "" || oauthCredential.ClientSecret == "" {
+				return fmt.Errorf("已保存的 OAuth client 凭据格式无效 credentialRef=%s",
+					diagnosticIdentifier(credential.ID))
+			}
+		default:
+			return fmt.Errorf("已保存的 Tailscale 凭据类型不受支持 credentialRef=%s kind=%q",
+				diagnosticIdentifier(credential.ID), credential.Kind)
+		}
+	}
+	return nil
+}
+
 func (s *Service) credentialToken(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", fmt.Errorf("凭据 ID 为空")

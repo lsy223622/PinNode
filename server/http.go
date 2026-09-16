@@ -236,6 +236,8 @@ func (s *Service) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.credentialToken(r.Context(), request.CredentialID); err != nil {
+		s.logger.Errorf("tailscale", "生成配对代码时读取 Tailscale 凭据失败: credentialRef=%s error=%s",
+			diagnosticIdentifier(request.CredentialID), safeDiagnosticError(err))
 		writeError(w, http.StatusBadRequest, "credential_unavailable", "所选 Tailscale 管理凭据不存在或不可用")
 		return
 	}

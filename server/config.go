@@ -144,6 +144,16 @@ func getenvBool(key string, fallback bool) (bool, error) {
 }
 
 func loadApplicationSecrets(databasePath string) ([]byte, string, error) {
+	// Once the database-adjacent key exists, it is the instance's authority.
+	// Do not let a stale process environment switch an existing database to a
+	// different key, and do not fall back if the canonical file is invalid.
+	canonicalSecretPath := defaultSecretPath(databasePath)
+	if rootKey, err := readInstanceKey(canonicalSecretPath); err == nil {
+		return deriveApplicationSecrets(rootKey)
+	} else if !os.IsNotExist(err) {
+		return nil, "", fmt.Errorf("读取数据库旁的实例密钥: %w", err)
+	}
+
 	credentialOverride := strings.TrimSpace(os.Getenv("PINNODE_CREDENTIAL_KEY"))
 	pepperOverride := os.Getenv("PINNODE_CODE_PEPPER")
 	var credentialKey, pepperKey []byte
@@ -160,14 +170,12 @@ func loadApplicationSecrets(databasePath string) ([]byte, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		credentialKey, err = deriveInstanceKey(rootKey, "pinnode/credential-encryption/v1")
+		var codePepper string
+		credentialKey, codePepper, err = deriveApplicationSecrets(rootKey)
 		if err != nil {
 			return nil, "", err
 		}
-		pepperKey, err = deriveInstanceKey(rootKey, "pinnode/pairing-code-hmac/v1")
-		if err != nil {
-			return nil, "", err
-		}
+		pepperKey = []byte(codePepper)
 	}
 
 	if credentialOverride != "" {
@@ -185,6 +193,18 @@ func loadApplicationSecrets(databasePath string) ([]byte, string, error) {
 		codePepper = pepperOverride
 	}
 	return credentialKey, codePepper, nil
+}
+
+func deriveApplicationSecrets(rootKey []byte) ([]byte, string, error) {
+	credentialKey, err := deriveInstanceKey(rootKey, "pinnode/credential-encryption/v1")
+	if err != nil {
+		return nil, "", err
+	}
+	pepperKey, err := deriveInstanceKey(rootKey, "pinnode/pairing-code-hmac/v1")
+	if err != nil {
+		return nil, "", err
+	}
+	return credentialKey, string(pepperKey), nil
 }
 
 func decode32ByteKey(value, name string) ([]byte, error) {

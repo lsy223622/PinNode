@@ -54,9 +54,10 @@ Argon2id 加盐哈希保存，登录前必须完成短时、按来源绑定且�
 同时还有来源/账号限速和持久化递增退避。登录成功后只在 HttpOnly、Secure（HTTPS）、
 SameSite=Strict Cookie 中保存随机会话令牌，数据库只保存摘要；写接口另行校验 CSRF token。
 
-首次启动生成 32 字节实例根密钥并保存在独立 `pinnode.secret` 文件；也可由
-`PINNODE_INSTANCE_KEY` 注入。HKDF-SHA-256 为 AES-256-GCM 凭据加密和 PIN HMAC 派生
-不同子密钥。命名后的 Tailscale OAuth client 或 API access token 以密文保存在 SQLite，
+首次启动生成 32 字节实例根密钥并保存在独立 `pinnode.secret` 文件；数据库旁的该文件一旦存在
+即为权威密钥来源，残留的密钥环境变量不会覆盖它，文件损坏时服务端拒绝启动。只有数据库旁
+尚无密钥文件的首次部署才可由 `PINNODE_INSTANCE_KEY` 等环境配置注入。HKDF-SHA-256 为
+AES-256-GCM 凭据加密和 PIN HMAC 派生不同子密钥。命名后的 Tailscale OAuth client 或 API access token 以密文保存在 SQLite，
 浏览器只能看到凭据 ID、类型、名称和使用时间。OAuth client ID/secret 用来自动获取并
 缓存短期 access token；临近过期时重新交换。生成 PIN 时选定的凭据 ID 会继续写入
 Session，保证供应、设备校验、路由操作和清理使用同一凭据。

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -41,11 +42,61 @@ func TestLoadConfigCreatesStableInstanceSecret(t *testing.T) {
 	}
 }
 
+func TestLoadConfigPrefersPersistedInstanceSecretOverEnvironmentOverrides(t *testing.T) {
+	clearSecretEnvironment(t)
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "pinnode.db")
+	canonicalSecretPath := filepath.Join(directory, "pinnode.secret")
+	root := bytes.Repeat([]byte{0x42}, 32)
+	if err := os.WriteFile(canonicalSecretPath, []byte(base64.RawStdEncoding.EncodeToString(root)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	wrongSecretPath := filepath.Join(t.TempDir(), "wrong.secret")
+	wrongRoot := bytes.Repeat([]byte{0x24}, 32)
+	if err := os.WriteFile(wrongSecretPath, []byte(base64.RawStdEncoding.EncodeToString(wrongRoot)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wrongCredentialKey := bytes.Repeat([]byte{0x23}, 32)
+	t.Setenv("PINNODE_DATABASE_PATH", databasePath)
+	t.Setenv("PINNODE_SECRET_PATH", wrongSecretPath)
+	t.Setenv("PINNODE_INSTANCE_KEY", base64.RawStdEncoding.EncodeToString(wrongRoot))
+	t.Setenv("PINNODE_CREDENTIAL_KEY", base64.RawStdEncoding.EncodeToString(wrongCredentialKey))
+	t.Setenv("PINNODE_CODE_PEPPER", strings.Repeat("wrong", 8))
+
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCredential, wantPepper, err := deriveApplicationSecrets(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(config.CredentialKey, wantCredential) || config.CodePepper != wantPepper {
+		t.Fatal("数据库旁的实例密钥没有优先于环境密钥覆盖")
+	}
+}
+
+func TestLoadConfigRejectsInvalidPersistedInstanceSecretWithoutEnvironmentFallback(t *testing.T) {
+	clearSecretEnvironment(t)
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "pinnode.secret"), []byte("not-a-valid-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINNODE_DATABASE_PATH", filepath.Join(directory, "pinnode.db"))
+	t.Setenv("PINNODE_INSTANCE_KEY", base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32)))
+
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "读取数据库旁的实例密钥") {
+		t.Fatalf("无效的持久化实例密钥不应回退到环境密钥: %v", err)
+	}
+}
+
 func TestLoadConfigUsesInstanceKeyWithoutCreatingFile(t *testing.T) {
 	clearSecretEnvironment(t)
 	directory := t.TempDir()
 	secretPath := filepath.Join(directory, "must-not-exist.secret")
 	root := bytes.Repeat([]byte{0x42}, 32)
+	t.Setenv("PINNODE_DATABASE_PATH", filepath.Join(directory, "pinnode.db"))
 	t.Setenv("PINNODE_INSTANCE_KEY", base64.RawStdEncoding.EncodeToString(root))
 	t.Setenv("PINNODE_SECRET_PATH", secretPath)
 
@@ -103,6 +154,7 @@ func TestLoadConfigPreservesLegacySecretOverrides(t *testing.T) {
 	secretPath := filepath.Join(directory, "must-not-exist.secret")
 	credentialKey := bytes.Repeat([]byte{0x23}, 32)
 	pepper := "legacy-pepper-with-at-least-32-characters"
+	t.Setenv("PINNODE_DATABASE_PATH", filepath.Join(directory, "pinnode.db"))
 	t.Setenv("PINNODE_CREDENTIAL_KEY", base64.RawStdEncoding.EncodeToString(credentialKey))
 	t.Setenv("PINNODE_CODE_PEPPER", pepper)
 	t.Setenv("PINNODE_SECRET_PATH", secretPath)
