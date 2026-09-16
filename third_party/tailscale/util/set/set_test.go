@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
-
-	"tailscale.com/types/views"
 )
 
 func TestSet(t *testing.T) {
@@ -90,18 +88,6 @@ func TestSet(t *testing.T) {
 
 func TestSetOf(t *testing.T) {
 	s := Of(1, 2, 3, 4, 4, 1)
-	if s.Len() != 4 {
-		t.Errorf("wrong len %d; want 4", s.Len())
-	}
-	for _, n := range []int{1, 2, 3, 4} {
-		if !s.Contains(n) {
-			t.Errorf("should contain %d", n)
-		}
-	}
-}
-
-func TestOfSliceView(t *testing.T) {
-	s := OfSliceView(views.SliceOf([]int{1, 2, 3, 4, 4, 1}))
 	if s.Len() != 4 {
 		t.Errorf("wrong len %d; want 4", s.Len())
 	}

@@ -26,7 +26,6 @@ import (
 	"tailscale.com/envknob"
 	"tailscale.com/hostinfo"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tstime"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
@@ -87,7 +86,7 @@ type mapSession struct {
 	// Fields storing state over the course of multiple MapResponses.
 	lastPrintMap           time.Time
 	lastNode               tailcfg.NodeView
-	lastCapSet             set.Set[nodecap.Cap]
+	lastCapSet             set.Set[tailcfg.NodeCapability]
 	lastDNSConfig          *tailcfg.DNSConfig
 	lastDERPMap            *tailcfg.DERPMap
 	lastUserProfile        map[tailcfg.UserID]tailcfg.UserProfileView
@@ -438,28 +437,55 @@ func (ms *mapSession) tryHandleIncrementally(res *tailcfg.MapResponse) bool {
 			return false
 		}
 	}
-	// Same shape for UserProfiles: deliver any new/updated profiles before
-	// the peer mutations that may reference them, so bus consumers never
-	// see a UserID for which a profile hasn't been published. The values
-	// are read from ms.lastUserProfile (just populated by
+	mutations, mutationsOK := netmap.MutationsFromMapResponse(res, time.Now())
+
+	// Same shape for UserProfiles: deliver profiles before the peer
+	// mutations that may reference them, so bus consumers never see a
+	// UserID for which a profile hasn't been published.
+	//
+	// Besides the new/updated profiles carried by the response, also
+	// replay the profiles of upserted peers' users from
+	// ms.lastUserProfile. A full netmap keeps only the profiles of users
+	// with a currently visible peer (see [mapSession.addUserProfile]), so
+	// a peer returning via delta upsert can reference a user the updater
+	// has since dropped, and control (mapver 5+) does not resend
+	// unchanged profiles. Without the replay, WhoIs on the returned peer
+	// fails at the user profile lookup until the next full netmap.
+	//
+	// The values are read from ms.lastUserProfile (just populated by
 	// updateStateFromResponse) so views are shared with mapSession's
 	// store; downstream consumers can use [UserProfileView.Equal] for
 	// dedup without copying.
-	if len(res.UserProfiles) > 0 {
+	var profiles map[tailcfg.UserID]tailcfg.UserProfileView
+	addProfile := func(id tailcfg.UserID) {
+		if id == 0 {
+			return
+		}
+		if up, ok := ms.lastUserProfile[id]; ok {
+			mak.Set(&profiles, id, up)
+		}
+	}
+	for _, up := range res.UserProfiles {
+		addProfile(up.ID)
+	}
+	if mutationsOK {
+		for _, m := range mutations {
+			if up, ok := m.(netmap.NodeMutationUpsert); ok {
+				addProfile(up.Node.User())
+				addProfile(up.Node.Sharer())
+			}
+		}
+	}
+	if len(profiles) > 0 {
 		upu, ok := ms.netmapUpdater.(UserProfileUpdater)
 		if !ok {
 			return false
-		}
-		profiles := make(map[tailcfg.UserID]tailcfg.UserProfileView, len(res.UserProfiles))
-		for _, up := range res.UserProfiles {
-			profiles[up.ID] = ms.lastUserProfile[up.ID]
 		}
 		if !upu.UpdateUserProfiles(profiles) {
 			return false
 		}
 	}
-	mutations, ok := netmap.MutationsFromMapResponse(res, time.Now())
-	if !ok {
+	if !mutationsOK {
 		return false
 	}
 	if len(mutations) > 0 {
@@ -604,7 +630,7 @@ func (ms *mapSession) updateStateFromResponse(resp *tailcfg.MapResponse) {
 	if resp.Node != nil {
 		ms.lastNode = resp.Node.View()
 
-		capSet := set.Set[nodecap.Cap]{}
+		capSet := set.Set[tailcfg.NodeCapability]{}
 		for _, c := range resp.Node.Capabilities {
 			capSet.Add(c)
 		}

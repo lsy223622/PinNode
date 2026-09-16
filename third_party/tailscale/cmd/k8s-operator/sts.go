@@ -68,12 +68,6 @@ const (
 
 	AnnotationProxyGroup = "tailscale.com/proxy-group"
 
-	// AnnotationShareACMEAccount opts a single ProxyGroup into ("true")
-	// or out of ("false") using the shared per-tailnet ACME account key.
-	// When absent, OPERATOR_SHARED_ACME_ACCOUNT_KEY on the operator is
-	// the default. See tailscale/tailscale#18251.
-	AnnotationShareACMEAccount = "tailscale.com/share-acme-account"
-
 	// Annotations settable by users on ingresses.
 	AnnotationFunnel       = "tailscale.com/funnel"
 	AnnotationHTTPRedirect = "tailscale.com/http-redirect"

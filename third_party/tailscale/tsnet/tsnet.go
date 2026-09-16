@@ -186,7 +186,6 @@ import (
 	"tailscale.com/net/socks5"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/tsd"
 	"tailscale.com/types/bools"
 	"tailscale.com/types/logger"
@@ -1651,12 +1650,12 @@ func (ServiceModeHTTP) network() string { return "tcp" }
 
 func (m ServiceModeHTTP) port() uint16 { return m.Port }
 
-func (m ServiceModeHTTP) capsMap() map[string][]peercap.Cap {
-	capsMap := map[string][]peercap.Cap{}
+func (m ServiceModeHTTP) capsMap() map[string][]tailcfg.PeerCapability {
+	capsMap := map[string][]tailcfg.PeerCapability{}
 	for path, capNames := range m.AcceptAppCaps {
-		caps := make([]peercap.Cap, 0, len(capNames))
+		caps := make([]tailcfg.PeerCapability, 0, len(capNames))
 		for _, c := range capNames {
-			caps = append(caps, peercap.Cap(c))
+			caps = append(caps, tailcfg.PeerCapability(c))
 		}
 		capsMap[path] = caps
 	}

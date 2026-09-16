@@ -9,8 +9,6 @@ import (
 	"net/netip"
 
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/types/ipproto"
 	"tailscale.com/types/views"
 )
@@ -41,7 +39,7 @@ var _MatchCloneNeedsRegeneration = Match(struct {
 	IPProto      views.Slice[ipproto.Proto]
 	Srcs         []netip.Prefix
 	SrcsContains func(netip.Addr) bool
-	SrcCaps      []nodecap.Cap
+	SrcCaps      []tailcfg.NodeCapability
 	Dsts         []NetPortRange
 	Caps         []CapMatch
 }{})
@@ -61,6 +59,6 @@ func (src *CapMatch) Clone() *CapMatch {
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _CapMatchCloneNeedsRegeneration = CapMatch(struct {
 	Dst    netip.Prefix
-	Cap    peercap.Cap
+	Cap    tailcfg.PeerCapability
 	Values []tailcfg.RawMessage
 }{})

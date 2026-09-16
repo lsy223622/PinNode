@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tstest/natlab/vmtest"
 	"tailscale.com/tstest/natlab/vnet"
 )
@@ -242,7 +241,7 @@ func TestNonTailscaleCGNATEndpoint(t *testing.T) {
 		vmtest.OS(vmtest.Gokrazy))
 	n1 := env.AddNode("node-1",
 		cgnatNW,
-		tailcfg.NodeCapMap{nodecap.DisableLinuxCGNATDropRule: nil},
+		tailcfg.NodeCapMap{tailcfg.NodeAttrDisableLinuxCGNATDropRule: nil},
 		vmtest.OS(vmtest.Gokrazy))
 
 	env.Start()

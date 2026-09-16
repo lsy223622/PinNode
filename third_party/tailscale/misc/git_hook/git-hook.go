@@ -22,11 +22,6 @@ import (
 	"tailscale.com/misc/git_hook/githook"
 )
 
-// maxPushBlobSize is the largest new or changed blob allowed in a
-// push. It matches the 1.5 MB limit enforced by the check-file-size CI
-// workflow. Set TS_SKIP_LARGE_FILE_CHECK=1 to override.
-const maxPushBlobSize = 1_500_000
-
 var pushRemotes = []string{
 	"git@github.com:tailscale/tailscale",
 	"git@github.com:tailscale/tailscale.git",
@@ -56,10 +51,7 @@ func main() {
 	case "commit-msg":
 		err = githook.AddChangeID(args)
 	case "pre-push":
-		err = githook.CheckPrePush(args, githook.PrePushConfig{
-			WatchedRemotes: pushRemotes,
-			MaxBlobSize:    maxPushBlobSize,
-		})
+		err = githook.CheckGoModReplaces(args, pushRemotes, nil)
 	}
 	if err != nil {
 		log.Fatalf("git-hook: %v: %v", cmd, err)

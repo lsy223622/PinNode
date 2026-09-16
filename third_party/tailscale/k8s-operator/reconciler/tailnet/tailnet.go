@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -35,6 +36,7 @@ import (
 	"tailscale.com/kube/kubetypes"
 	"tailscale.com/tstime"
 	"tailscale.com/util/clientmetric"
+	"tailscale.com/util/set"
 )
 
 type (
@@ -49,7 +51,10 @@ type (
 		logger             *zap.SugaredLogger
 		clientFunc         func(*tsapi.Tailnet, *corev1.Secret) tsclient.Client
 		registry           ClientRegistry
-		tracker            *reconciler.ResourceTracker
+
+		// Metrics related fields
+		mu       sync.Mutex
+		tailnets set.Slice[types.UID]
 	}
 
 	// The ReconcilerOptions type contains configuration values for the Reconciler.
@@ -98,7 +103,6 @@ func NewReconciler(options ReconcilerOptions) *Reconciler {
 		logger:             options.Logger.Named(reconcilerName),
 		clientFunc:         options.ClientFunc,
 		registry:           options.Registry,
-		tracker:            reconciler.NewResourceTracker(gaugeTailnetResources),
 	}
 }
 
@@ -137,11 +141,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 }
 
 func (r *Reconciler) delete(ctx context.Context, tailnet *tsapi.Tailnet) (reconcile.Result, error) {
-	if err := reconciler.ClearFinalizer(ctx, r.Client, tailnet); err != nil {
+	reconciler.RemoveFinalizer(tailnet)
+	if err := r.Update(ctx, tailnet); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to remove finalizer from Tailnet %q: %w", tailnet.Name, err)
 	}
 
-	r.tracker.Remove(tailnet.UID)
+	r.mu.Lock()
+	r.tailnets.Remove(tailnet.UID)
+	r.mu.Unlock()
+	gaugeTailnetResources.Set(int64(r.tailnets.Len()))
 	r.registry.Remove(tailnet.Name)
 
 	return reconcile.Result{}, nil
@@ -155,7 +163,10 @@ const (
 )
 
 func (r *Reconciler) createOrUpdate(ctx context.Context, tailnet *tsapi.Tailnet) (reconcile.Result, error) {
-	r.tracker.Add(tailnet.UID)
+	r.mu.Lock()
+	r.tailnets.Add(tailnet.UID)
+	r.mu.Unlock()
+	gaugeTailnetResources.Set(int64(r.tailnets.Len()))
 
 	name := types.NamespacedName{Name: tailnet.Spec.Credentials.SecretName, Namespace: r.tailscaleNamespace}
 
@@ -229,7 +240,8 @@ func (r *Reconciler) createOrUpdate(ctx context.Context, tailnet *tsapi.Tailnet)
 		return reconcile.Result{}, fmt.Errorf("failed to update Tailnet status for %q: %w", tailnet.Name, err)
 	}
 
-	if err := reconciler.EnsureFinalizer(ctx, r.Client, tailnet); err != nil {
+	reconciler.SetFinalizer(tailnet)
+	if err = r.Update(ctx, tailnet); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to add finalizer to Tailnet %q: %w", tailnet.Name, err)
 	}
 

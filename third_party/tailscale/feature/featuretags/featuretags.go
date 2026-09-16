@@ -1,7 +1,7 @@
 // Copyright (c) Tailscale Inc & contributors
 // SPDX-License-Identifier: BSD-3-Clause
 
-// Package featuretags is a registry of all the ts_omit-able build tags.
+// The featuretags package is a registry of all the ts_omit-able build tags.
 package featuretags
 
 import "tailscale.com/util/set"

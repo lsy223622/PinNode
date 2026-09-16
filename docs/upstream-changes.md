@@ -2,8 +2,8 @@
 
 ## 基线
 
-- Android 上游：0867f01687a3955f7c0b5c6c62b236b997d68601
-- Tailscale 核心：25877455e79d9e3ebd5e99200ca86fd62bcc0ed9
+- Android 上游：1b32d3caa275af3f36df31305226191215ade987（对应 Tailscale 1.102.4）
+- Tailscale 核心：bbcd7d1fc2054b9189ebc1531acf74bd880ca0c8（v1.102.4 实际提交；标签对象为 3caf7d9e…）
 
 ## PinNode 改动
 

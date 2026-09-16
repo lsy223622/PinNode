@@ -1,7 +1,7 @@
 // Copyright (c) Tailscale Inc & contributors
 // SPDX-License-Identifier: BSD-3-Clause
 
-package tsdnsjsonv0_test
+package jsonoutput_test
 
 import (
 	"encoding/json"
@@ -10,10 +10,10 @@ import (
 	"os"
 	"os/exec"
 
-	"tailscale.com/cmd/tailscale/tsdnsjsonv0"
+	"tailscale.com/cmd/tailscale/cli/jsonoutput"
 )
 
-func ExampleQueryResponse() {
+func ExampleDNSQueryResult() {
 	cmd := exec.Command("tailscale", "dns", "query", "--json", "hello.ts.net")
 	out, err := cmd.Output()
 	if err != nil {
@@ -23,9 +23,9 @@ func ExampleQueryResponse() {
 		panic(err)
 	}
 
-	var resp tsdnsjsonv0.QueryResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
+	var dnsQuery jsonoutput.DNSQueryResult
+	if err := json.Unmarshal(out, &dnsQuery); err != nil {
 		panic(err)
 	}
-	fmt.Printf("{type: %s, name: %q}\n", resp.QueryType, resp.Name)
+	fmt.Printf("{type: %s, name: %q}\n", dnsQuery.QueryType, dnsQuery.Name)
 }

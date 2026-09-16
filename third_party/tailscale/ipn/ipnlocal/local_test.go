@@ -49,11 +49,11 @@ import (
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tsd"
 	"tailscale.com/tstest"
 	"tailscale.com/tstest/deptest"
 	"tailscale.com/tstest/typewalk"
+	"tailscale.com/tstime"
 	"tailscale.com/types/appctype"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/ipproto"
@@ -620,6 +620,15 @@ func TestUpdateNetMapCache(t *testing.T) {
 					netip.MustParsePrefix("100.2.3.5/32"),
 				},
 			}).View(),
+			(&tailcfg.Node{
+				ID:       602,
+				StableID: "n602FAKE",
+				User:     tailcfg.UserID(1),
+				Key:      makeNodeKeyFromID(602),
+				Addresses: []netip.Prefix{
+					netip.MustParsePrefix("100.3.4.6/32"),
+				},
+			}).View(),
 		},
 	}
 
@@ -673,7 +682,7 @@ func TestUpdateNetMapCache(t *testing.T) {
 
 	// Now enable the netmap caching attribute, and send another update.
 	// After doing so, the cache should have real data in it.
-	testMap.AllCaps = set.Of(nodecap.CacheNetworkMaps)
+	testMap.AllCaps = set.Of(tailcfg.NodeAttrCacheNetworkMaps)
 
 	clb.mu.Lock()
 	clb.setNetMapLocked(testMap)
@@ -685,6 +694,19 @@ func TestUpdateNetMapCache(t *testing.T) {
 		t.Error("Cache is unexpectedly empty")
 	} else {
 		t.Logf("Cache directory has %d entries (OK)", len(des))
+	}
+
+	// Apply a delta update that removes a node, and verify that this gets
+	// reflected in the cache.
+	clb.UpdateNetmapDelta([]netmap.NodeMutation{
+		netmap.MakeNodeMutationRemove(602),
+	})
+	if got, err := netmapcache.NewCache(netmapcache.FileStore(cacheDir)).Load(t.Context()); err != nil {
+		t.Errorf("Load cached netmap: %v", err)
+	} else if i := slices.IndexFunc(got.Peers, func(n tailcfg.NodeView) bool {
+		return n.ID() == 602
+	}); i >= 0 {
+		t.Errorf("Cache did not get updated, %d (%v) still present", got.Peers[i].ID(), got.Peers[i].StableID())
 	}
 
 	// Now disable the node attribute again, send another update, and verify
@@ -1804,7 +1826,7 @@ func TestStatusPeerCapabilities(t *testing.T) {
 	tests := []struct {
 		name                     string
 		peers                    []tailcfg.NodeView
-		expectedPeerCapabilities map[tailcfg.StableNodeID][]nodecap.Cap
+		expectedPeerCapabilities map[tailcfg.StableNodeID][]tailcfg.NodeCapability
 		expectedPeerCapMap       map[tailcfg.StableNodeID]tailcfg.NodeCapMap
 	}{
 		{
@@ -1816,9 +1838,9 @@ func TestStatusPeerCapabilities(t *testing.T) {
 					Key:             makeNodeKeyFromID(1),
 					IsWireGuardOnly: true,
 					Hostinfo:        (&tailcfg.Hostinfo{}).View(),
-					Capabilities:    []nodecap.Cap{nodecap.SSH},
-					CapMap: (tailcfg.NodeCapMap)(map[nodecap.Cap][]tailcfg.RawMessage{
-						nodecap.SSH: nil,
+					Capabilities:    []tailcfg.NodeCapability{tailcfg.CapabilitySSH},
+					CapMap: (tailcfg.NodeCapMap)(map[tailcfg.NodeCapability][]tailcfg.RawMessage{
+						tailcfg.CapabilitySSH: nil,
 					}),
 				}).View(),
 				(&tailcfg.Node{
@@ -1826,9 +1848,9 @@ func TestStatusPeerCapabilities(t *testing.T) {
 					StableID:     "bar",
 					Key:          makeNodeKeyFromID(2),
 					Hostinfo:     (&tailcfg.Hostinfo{}).View(),
-					Capabilities: []nodecap.Cap{nodecap.Admin},
-					CapMap: (tailcfg.NodeCapMap)(map[nodecap.Cap][]tailcfg.RawMessage{
-						nodecap.Admin: {`{"test": "true}`},
+					Capabilities: []tailcfg.NodeCapability{tailcfg.CapabilityAdmin},
+					CapMap: (tailcfg.NodeCapMap)(map[tailcfg.NodeCapability][]tailcfg.RawMessage{
+						tailcfg.CapabilityAdmin: {`{"test": "true}`},
 					}),
 				}).View(),
 				(&tailcfg.Node{
@@ -1836,26 +1858,26 @@ func TestStatusPeerCapabilities(t *testing.T) {
 					StableID:     "baz",
 					Key:          makeNodeKeyFromID(3),
 					Hostinfo:     (&tailcfg.Hostinfo{}).View(),
-					Capabilities: []nodecap.Cap{nodecap.Owner},
-					CapMap: (tailcfg.NodeCapMap)(map[nodecap.Cap][]tailcfg.RawMessage{
-						nodecap.Owner: nil,
+					Capabilities: []tailcfg.NodeCapability{tailcfg.CapabilityOwner},
+					CapMap: (tailcfg.NodeCapMap)(map[tailcfg.NodeCapability][]tailcfg.RawMessage{
+						tailcfg.CapabilityOwner: nil,
 					}),
 				}).View(),
 			},
-			expectedPeerCapabilities: map[tailcfg.StableNodeID][]nodecap.Cap{
-				tailcfg.StableNodeID("foo"): {nodecap.SSH},
-				tailcfg.StableNodeID("bar"): {nodecap.Admin},
-				tailcfg.StableNodeID("baz"): {nodecap.Owner},
+			expectedPeerCapabilities: map[tailcfg.StableNodeID][]tailcfg.NodeCapability{
+				tailcfg.StableNodeID("foo"): {tailcfg.CapabilitySSH},
+				tailcfg.StableNodeID("bar"): {tailcfg.CapabilityAdmin},
+				tailcfg.StableNodeID("baz"): {tailcfg.CapabilityOwner},
 			},
 			expectedPeerCapMap: map[tailcfg.StableNodeID]tailcfg.NodeCapMap{
-				tailcfg.StableNodeID("foo"): (tailcfg.NodeCapMap)(map[nodecap.Cap][]tailcfg.RawMessage{
-					nodecap.SSH: nil,
+				tailcfg.StableNodeID("foo"): (tailcfg.NodeCapMap)(map[tailcfg.NodeCapability][]tailcfg.RawMessage{
+					tailcfg.CapabilitySSH: nil,
 				}),
-				tailcfg.StableNodeID("bar"): (tailcfg.NodeCapMap)(map[nodecap.Cap][]tailcfg.RawMessage{
-					nodecap.Admin: {`{"test": "true}`},
+				tailcfg.StableNodeID("bar"): (tailcfg.NodeCapMap)(map[tailcfg.NodeCapability][]tailcfg.RawMessage{
+					tailcfg.CapabilityAdmin: {`{"test": "true}`},
 				}),
-				tailcfg.StableNodeID("baz"): (tailcfg.NodeCapMap)(map[nodecap.Cap][]tailcfg.RawMessage{
-					nodecap.Owner: nil,
+				tailcfg.StableNodeID("baz"): (tailcfg.NodeCapMap)(map[tailcfg.NodeCapability][]tailcfg.RawMessage{
+					tailcfg.CapabilityOwner: nil,
 				}),
 			},
 		},
@@ -2484,6 +2506,77 @@ func TestSetControlClientStatusSendsFullNetmapAsPeerChanges(t *testing.T) {
 	}
 	b.SetControlClientStatus(b.cc, controlclient.Status{NetMap: nm, LoggedIn: true})
 	nw.check()
+}
+
+type expiryCallbackClock struct {
+	tstime.StdClock
+	now       time.Time
+	afterFunc func()
+}
+
+type expiryCallbackTimer struct{}
+
+func (*expiryCallbackTimer) Reset(time.Duration) bool { return false }
+func (*expiryCallbackTimer) Stop() bool               { return true }
+
+func (c *expiryCallbackClock) Now() time.Time { return c.now }
+
+func (c *expiryCallbackClock) AfterFunc(_ time.Duration, f func()) tstime.TimerController {
+	c.afterFunc = f
+	return new(expiryCallbackTimer)
+}
+
+func TestNetmapExpiryTimerPreservesPeerDeltas(t *testing.T) {
+	b := newTestLocalBackend(t)
+	now := time.Unix(1770000000, 0)
+	clock := &expiryCallbackClock{now: now}
+	b.ForTest().SetClock(clock)
+
+	oldPeer := makePeer(1, func(n *tailcfg.Node) {
+		n.KeyExpiry = now.Add(time.Minute)
+	})
+	nm := &netmap.NetworkMap{
+		SelfNode: makePeer(2),
+		Peers:    []tailcfg.NodeView{oldPeer},
+	}
+	b.SetControlClientStatus(b.cc, controlclient.Status{NetMap: nm})
+	if clock.afterFunc == nil {
+		t.Fatal("expiry timer was not scheduled")
+	}
+	expiryFunc := clock.afterFunc
+
+	newPeer := oldPeer.AsStruct()
+	newPeer.Key = makeNodeKeyFromID(3)
+	newPeer.KeyExpiry = now.Add(time.Hour)
+	b.UpdateNetmapDelta([]netmap.NodeMutation{
+		netmap.NodeMutationUpsert{Node: newPeer.View()},
+	})
+
+	clock.now = now.Add(time.Minute + 10*time.Second)
+	expiryFunc()
+
+	got, ok := b.PeerByID(oldPeer.ID())
+	if !ok {
+		t.Fatal("peer disappeared when expiry timer fired")
+	}
+	if got.Key() != newPeer.Key {
+		t.Errorf("peer key reverted when expiry timer fired: got %v, want %v", got.Key(), newPeer.Key)
+	}
+	if got.Expired() {
+		t.Error("re-authenticated peer was marked expired when expiry timer fired")
+	}
+}
+
+func TestNetmapExpiryIgnoredDuringControlClientShutdown(t *testing.T) {
+	b := newTestLocalBackend(t)
+	call := b.numClientStatusCalls.Load()
+	b.ignoreControlClientUpdates.Store(true)
+
+	b.handleNetmapExpiry(b.cc, controlclient.Status{}, call, 0)
+
+	if got := b.numClientStatusCalls.Load(); got != call {
+		t.Errorf("status calls = %d, want %d", got, call)
+	}
 }
 
 // TestNotifyForSessionUserProfilesGating verifies that
@@ -3396,7 +3489,7 @@ func TestReconfigureAppConnector(t *testing.T) {
 		SelfNode: (&tailcfg.Node{
 			Name: "example.ts.net",
 			Tags: []string{"tag:example"},
-			CapMap: (tailcfg.NodeCapMap)(map[nodecap.Cap][]tailcfg.RawMessage{
+			CapMap: (tailcfg.NodeCapMap)(map[tailcfg.NodeCapability][]tailcfg.RawMessage{
 				"tailscale.com/app-connectors": {tailcfg.RawMessage(appCfg)},
 			}),
 		}).View(),
@@ -4754,7 +4847,7 @@ func TestTCPHandlerForDstWithVIPService(t *testing.T) {
 			SelfNode: (&tailcfg.Node{
 				Name: "example.ts.net",
 				CapMap: tailcfg.NodeCapMap{
-					nodecap.ServiceHost: []tailcfg.RawMessage{tailcfg.RawMessage(svcIPMapJSON)},
+					tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{tailcfg.RawMessage(svcIPMapJSON)},
 				},
 			}).View(),
 			UserProfiles: map[tailcfg.UserID]tailcfg.UserProfileView{
@@ -5134,7 +5227,7 @@ func TestDriveManageShares(t *testing.T) {
 			if !tt.disabled {
 				nm := new(*b.currentNode().NetMap())
 				self := nm.SelfNode.AsStruct()
-				self.CapMap = tailcfg.NodeCapMap{nodecap.TaildriveShare: nil}
+				self.CapMap = tailcfg.NodeCapMap{tailcfg.NodeAttrsTaildriveShare: nil}
 				nm.SelfNode = self.View()
 				b.currentNode().SetNetMap(nm)
 				b.sys.Set(driveimpl.NewFileSystemForRemote(b.logf))
@@ -5340,7 +5433,7 @@ func withExitRoutes() peerOptFunc {
 
 func withSuggest() peerOptFunc {
 	return func(n *tailcfg.Node) {
-		mak.Set(&n.CapMap, nodecap.SuggestExitNode, []tailcfg.RawMessage{})
+		mak.Set(&n.CapMap, tailcfg.NodeAttrSuggestExitNode, []tailcfg.RawMessage{})
 	}
 }
 
@@ -6174,7 +6267,7 @@ func TestSuggestExitNodeTrafficSteering(t *testing.T) {
 			netip.MustParsePrefix("fe70::1/128"),
 		},
 		CapMap: tailcfg.NodeCapMap{
-			nodecap.TrafficSteering: []tailcfg.RawMessage{},
+			tailcfg.NodeAttrTrafficSteering: []tailcfg.RawMessage{},
 		},
 	}
 
@@ -8015,7 +8108,7 @@ func TestSrcCapPacketFilter(t *testing.T) {
 		},
 		PacketFilter: []filtertype.Match{{
 			IPProto: views.SliceOf([]ipproto.Proto{ipproto.TCP}),
-			SrcCaps: []nodecap.Cap{"cap-X"}, // cap in packet filter rule
+			SrcCaps: []tailcfg.NodeCapability{"cap-X"}, // cap in packet filter rule
 			Dsts: []filtertype.NetPortRange{{
 				Net: netip.MustParsePrefix("1.1.1.1/32"),
 				Ports: filtertype.PortRange{
@@ -8076,7 +8169,7 @@ func TestSrcCapPacketFilterUnsignedPeer(t *testing.T) {
 		},
 		PacketFilter: []filtertype.Match{{
 			IPProto: views.SliceOf([]ipproto.Proto{ipproto.TCP}),
-			SrcCaps: []nodecap.Cap{"cap-X"},
+			SrcCaps: []tailcfg.NodeCapability{"cap-X"},
 			Dsts: []filtertype.NetPortRange{{
 				Net: netip.MustParsePrefix("1.1.1.1/32"),
 				Ports: filtertype.PortRange{
@@ -8898,7 +8991,7 @@ func TestRouteAllDisabled(t *testing.T) {
 						pp("100.64.1.1/32"),
 					},
 					CapMap: tailcfg.NodeCapMap{
-						nodecap.ServiceHost: []tailcfg.RawMessage{
+						tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{
 							tailcfg.RawMessage(svcIPMapJSON),
 						},
 					},
@@ -9692,66 +9785,5 @@ func TestRouterConfigExitNodeBlackhole(t *testing.T) {
 	rcfg := lb.routerConfigLocked(cfg, new(ipn.Prefs).View(), nm)
 	if hasDefaults(rcfg.Routes) {
 		t.Errorf("no exit node: Routes = %v; want no default routes", rcfg.Routes)
-	}
-}
-
-func TestApplyPrefsToHostinfoDedup(t *testing.T) {
-	t.Parallel()
-
-	pfx := netip.MustParsePrefix
-	tests := []struct {
-		name       string
-		routes     []netip.Prefix
-		tags       []string
-		wantRoutes []netip.Prefix
-		wantTags   []string
-	}{
-		{
-			name:       "no_dups",
-			routes:     []netip.Prefix{pfx("10.0.0.0/8"), pfx("192.168.0.0/16")},
-			tags:       []string{"tag:a", "tag:b"},
-			wantRoutes: []netip.Prefix{pfx("10.0.0.0/8"), pfx("192.168.0.0/16")},
-			wantTags:   []string{"tag:a", "tag:b"},
-		},
-		{
-			name:       "dup_routes",
-			routes:     []netip.Prefix{pfx("10.0.0.0/8"), pfx("192.168.0.0/16"), pfx("10.0.0.0/8")},
-			wantRoutes: []netip.Prefix{pfx("10.0.0.0/8"), pfx("192.168.0.0/16")},
-		},
-		{
-			name:     "dup_tags",
-			tags:     []string{"tag:b", "tag:a", "tag:b", "tag:a"},
-			wantTags: []string{"tag:a", "tag:b"},
-		},
-		{
-			name:       "dups_unsorted_input",
-			routes:     []netip.Prefix{pfx("192.168.0.0/16"), pfx("10.0.0.0/8"), pfx("192.168.0.0/16")},
-			tags:       []string{"tag:z", "tag:a", "tag:z"},
-			wantRoutes: []netip.Prefix{pfx("10.0.0.0/8"), pfx("192.168.0.0/16")},
-			wantTags:   []string{"tag:a", "tag:z"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			b := newTestLocalBackend(t)
-			prefs := &ipn.Prefs{
-				AdvertiseRoutes: tt.routes,
-				AdvertiseTags:   tt.tags,
-			}
-
-			var hi tailcfg.Hostinfo
-			b.mu.Lock()
-			b.applyPrefsToHostinfoLocked(&hi, prefs.View())
-			b.mu.Unlock()
-
-			if !slices.Equal(tt.wantRoutes, hi.RoutableIPs) {
-				t.Errorf("RoutableIPs mismatch, got %v; want %v", hi.RoutableIPs, tt.wantRoutes)
-			}
-			if !slices.Equal(tt.wantTags, hi.RequestTags) {
-				t.Errorf("RequestTags mismatch, got %v; want %v", hi.RequestTags, tt.wantTags)
-			}
-		})
 	}
 }

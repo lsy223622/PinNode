@@ -15,9 +15,7 @@ import (
 // based on the user who owns the other end of the connection.
 // and couldn't. The returned connIdentity has NotWindows set to true.
 func GetConnIdentity(_ logger.Logf, c net.Conn) (ci *ConnIdentity, err error) {
-	ci = &ConnIdentity{conn: c, notWindows: true}
-	_, ci.isUnixSock = c.(*net.UnixConn)
-	return ci, nil
+	return &ConnIdentity{conn: c, notWindows: true}, nil
 }
 
 // WindowsToken is unsupported when GOOS != windows and always returns

@@ -1,7 +1,7 @@
 // Copyright (c) Tailscale Inc & contributors
 // SPDX-License-Identifier: BSD-3-Clause
 
-// Package ctxkey provides type-safe key-value pairs for use with [context.Context].
+// ctxkey provides type-safe key-value pairs for use with [context.Context].
 //
 // Example usage:
 //

@@ -56,7 +56,6 @@ import (
 	apiproxy "tailscale.com/k8s-operator/api-proxy"
 	tsapi "tailscale.com/k8s-operator/apis/v1alpha1"
 	"tailscale.com/k8s-operator/reconciler/peerrelay"
-	"tailscale.com/k8s-operator/reconciler/proxyclass"
 	"tailscale.com/k8s-operator/reconciler/proxygrouppolicy"
 	"tailscale.com/k8s-operator/reconciler/tailnet"
 	"tailscale.com/k8s-operator/tsclient"
@@ -97,7 +96,6 @@ func main() {
 		tsFirewallMode        = defaultEnv("PROXY_FIREWALL_MODE", "")
 		defaultProxyClass     = defaultEnv("PROXY_DEFAULT_CLASS", "")
 		isDefaultLoadBalancer = defaultBool("OPERATOR_DEFAULT_LOAD_BALANCER", false)
-		sharedACMEAccountKey  = defaultBool("OPERATOR_SHARED_ACME_ACCOUNT_KEY", false)
 		loginServer           = strings.TrimSuffix(defaultEnv("OPERATOR_LOGIN_SERVER", ""), "/")
 		ingressClassName      = defaultEnv("OPERATOR_INGRESS_CLASS_NAME", "tailscale")
 		operatorSAName        = defaultEnv("OPERATOR_SERVICE_ACCOUNT_NAME", "operator")
@@ -172,7 +170,6 @@ func main() {
 		defaultProxyClass:             defaultProxyClass,
 		loginServer:                   loginServer,
 		ingressClassName:              ingressClassName,
-		sharedACMEAccountKey:          sharedACMEAccountKey,
 	})
 }
 
@@ -510,12 +507,13 @@ func runReconcilers(opts reconcilerOpts) {
 	}
 
 	ingressSvcFromEpsFilter := handler.EnqueueRequestsFromMapFunc(ingressSvcFromEps(mgr.GetClient(), opts.log.Named("service-pg-reconciler")))
+	servicesProxyGroupFilter := handler.EnqueueRequestsFromMapFunc(servicesFromIngressProxyGroup(mgr.GetClient(), opts.log))
 	err = builder.
 		ControllerManagedBy(mgr).
 		For(&corev1.Service{}, builder.WithPredicates(serviceManagedResourceFilterPredicate())).
 		Named("service-pg-reconciler").
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(HAServicesFromSecret(mgr.GetClient(), startlog))).
-		Watches(&tsapi.ProxyGroup{}, ingressProxyGroupFilter).
+		Watches(&tsapi.ProxyGroup{}, servicesProxyGroupFilter).
 		Watches(&discoveryv1.EndpointSlice{}, ingressSvcFromEpsFilter).
 		Complete(&HAServiceReconciler{
 			recorder:    eventRecorder,
@@ -652,18 +650,26 @@ func runReconcilers(opts reconcilerOpts) {
 		startlog.Fatalf("could not create egress Pods readiness reconciler: %v", err)
 	}
 
-	proxyClassOptions := proxyclass.ReconcilerOptions{
-		Client:      mgr.GetClient(),
-		Recorder:    eventRecorder,
-		TsNamespace: opts.tailscaleNamespace,
-		Logger:      opts.log,
-		Clock:       tstime.DefaultClock{},
+	// ProxyClass reconciler gets triggered on ServiceMonitor CRD changes to ensure that any ProxyClasses, that
+	// define that a ServiceMonitor should be created, were set to invalid because the CRD did not exist get
+	// reconciled if the CRD is applied at a later point.
+	kPortRange := getServicesNodePortRange(context.Background(), mgr.GetClient(), opts.tailscaleNamespace, startlog)
+	serviceMonitorFilter := handler.EnqueueRequestsFromMapFunc(proxyClassesWithServiceMonitor(mgr.GetClient(), opts.log))
+	err = builder.ControllerManagedBy(mgr).
+		For(&tsapi.ProxyClass{}).
+		Named("proxyclass-reconciler").
+		Watches(&apiextensionsv1.CustomResourceDefinition{}, serviceMonitorFilter).
+		Complete(&ProxyClassReconciler{
+			Client:        mgr.GetClient(),
+			nodePortRange: kPortRange,
+			recorder:      eventRecorder,
+			tsNamespace:   opts.tailscaleNamespace,
+			logger:        opts.log.Named("proxyclass-reconciler"),
+			clock:         tstime.DefaultClock{},
+		})
+	if err != nil {
+		startlog.Fatal("could not create proxyclass reconciler: %v", err)
 	}
-
-	if err = proxyclass.NewReconciler(proxyClassOptions).Register(mgr); err != nil {
-		startlog.Fatalf("could not create proxyclass reconciler: %v", err)
-	}
-
 	logger := startlog.Named("dns-records-reconciler-event-handlers")
 	// On EndpointSlice events, if it is an EndpointSlice for an
 	// ingress/egress proxy headless Service, reconcile the headless
@@ -747,7 +753,6 @@ func runReconcilers(opts reconcilerOpts) {
 	proxyClassFilterForProxyGroup := handler.EnqueueRequestsFromMapFunc(proxyClassHandlerForProxyGroup(mgr.GetClient(), startlog))
 	nodeFilterForProxyGroup := handler.EnqueueRequestsFromMapFunc(nodeHandlerForProxyGroup(mgr.GetClient(), opts.defaultProxyClass, startlog))
 	saFilterForProxyGroup := handler.EnqueueRequestsFromMapFunc(serviceAccountHandlerForProxyGroup(mgr.GetClient(), startlog))
-	acmeSecretFilterForProxyGroup := handler.EnqueueRequestsFromMapFunc(acmeAccountsSecretHandlerForProxyGroup(mgr.GetClient(), opts.tailscaleNamespace, opts.sharedACMEAccountKey, startlog))
 	err = builder.ControllerManagedBy(mgr).
 		For(&tsapi.ProxyGroup{}).
 		Named("proxygroup-reconciler").
@@ -756,9 +761,6 @@ func runReconcilers(opts reconcilerOpts) {
 		Watches(&corev1.ConfigMap{}, ownedByProxyGroupFilter).
 		Watches(&corev1.ServiceAccount{}, saFilterForProxyGroup).
 		Watches(&corev1.Secret{}, ownedByProxyGroupFilter).
-		// The shared ACME accounts Secret has no ProxyGroup owner ref, so
-		// watch it by name to react to its deletion/recreation.
-		Watches(&corev1.Secret{}, acmeSecretFilterForProxyGroup).
 		Watches(&rbacv1.Role{}, ownedByProxyGroupFilter).
 		Watches(&rbacv1.RoleBinding{}, ownedByProxyGroupFilter).
 		Watches(&tsapi.ProxyClass{}, proxyClassFilterForProxyGroup).
@@ -779,8 +781,6 @@ func runReconcilers(opts reconcilerOpts) {
 			loginServer:       opts.tsServer.ControlURL,
 			authKeyRateLimits: make(map[string]*rate.Limiter),
 			authKeyReissuing:  make(map[string]bool),
-
-			sharedACMEAccountKey: opts.sharedACMEAccountKey,
 		})
 	if err != nil {
 		startlog.Fatalf("could not create ProxyGroup reconciler: %v", err)
@@ -836,13 +836,6 @@ type reconcilerOpts struct {
 	// ingressClassName is the name of the ingress class used by reconcilers of Ingress resources. This defaults
 	// to "tailscale" but can be customised.
 	ingressClassName string
-	// sharedACMEAccountKey is the operator-wide default for the
-	// shared-ACME-account feature. When true, every ProxyGroup uses the
-	// shared per-tailnet account key unless the ProxyGroup explicitly
-	// opts out via tailscale.com/share-acme-account=false. When false,
-	// ProxyGroups opt in individually via
-	// tailscale.com/share-acme-account=true.
-	sharedACMEAccountKey bool
 	// operatorSAName is the name of the ServiceAccount that the operator pod runs as. It is used as the target
 	// ServiceAccount when minting tokens via the Kubernetes TokenRequest API for Tailnets that authenticate using
 	// workload identity federation.
@@ -1232,30 +1225,6 @@ func serviceAccountHandlerForProxyGroup(cl client.Client, logger *zap.SugaredLog
 					reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&pg)})
 					break
 				}
-			}
-		}
-		return reqs
-	}
-}
-
-// acmeAccountsSecretHandlerForProxyGroup enqueues ProxyGroups that use the
-// shared ACME account when the shared ACME accounts Secret changes. The
-// Secret carries no owner reference, so the owner-based Secret watch never
-// matches it.
-func acmeAccountsSecretHandlerForProxyGroup(cl client.Client, tsNamespace string, sharedACMEAccountDefault bool, logger *zap.SugaredLogger) handler.MapFunc {
-	return func(ctx context.Context, o client.Object) []reconcile.Request {
-		if o.GetName() != kubetypes.ACMEAccountsSecretName || o.GetNamespace() != tsNamespace {
-			return nil
-		}
-		pgList := new(tsapi.ProxyGroupList)
-		if err := cl.List(ctx, pgList); err != nil {
-			logger.Debugf("error listing ProxyGroups for shared ACME accounts Secret: %v", err)
-			return nil
-		}
-		reqs := make([]reconcile.Request, 0, len(pgList.Items))
-		for _, pg := range pgList.Items {
-			if sharedACMEAccountEnabled(&pg, sharedACMEAccountDefault) {
-				reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&pg)})
 			}
 		}
 		return reqs
@@ -1699,6 +1668,37 @@ func ingressesFromIngressProxyGroup(cl client.Client, logger *zap.SugaredLogger)
 	}
 }
 
+// servicesFromIngressProxyGroup is an event handler for ingress ProxyGroups. It returns reconcile requests for all
+// user-created Services that should be exposed on this ProxyGroup.
+func servicesFromIngressProxyGroup(cl client.Client, logger *zap.SugaredLogger) handler.MapFunc {
+	return func(ctx context.Context, o client.Object) []reconcile.Request {
+		pg, ok := o.(*tsapi.ProxyGroup)
+		if !ok {
+			logger.Warn("ProxyGroup handler triggered for an object that is not a ProxyGroup")
+			return nil
+		}
+
+		if pg.Spec.Type != tsapi.ProxyGroupTypeIngress {
+			return nil
+		}
+		svcList := &corev1.ServiceList{}
+		if err := cl.List(ctx, svcList, client.MatchingFields{indexIngressProxyGroup: pg.Name}); err != nil {
+			logger.Infof("error listing Services: %v, skipping a reconcile for event on ProxyGroup %s", err, pg.Name)
+			return nil
+		}
+		reqs := make([]reconcile.Request, 0)
+		for _, svc := range svcList.Items {
+			reqs = append(reqs, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: svc.Namespace,
+					Name:      svc.Name,
+				},
+			})
+		}
+		return reqs
+	}
+}
+
 // epsFromExternalNameService is an event handler for ExternalName Services that define a Tailscale egress service that
 // should be exposed on a ProxyGroup. It returns reconcile requests for EndpointSlices created for this Service.
 func epsFromExternalNameService(cl client.Client, logger *zap.SugaredLogger, ns string) handler.MapFunc {
@@ -1765,6 +1765,40 @@ func podsFromEgressEps(cl client.Client, logger *zap.SugaredLogger, ns string) h
 				},
 			})
 		}
+		return reqs
+	}
+}
+
+// proxyClassesWithServiceMonitor returns an event handler that, given that the event is for the Prometheus
+// ServiceMonitor CRD, returns all ProxyClasses that define that a ServiceMonitor should be created.
+func proxyClassesWithServiceMonitor(cl client.Client, logger *zap.SugaredLogger) handler.MapFunc {
+	return func(ctx context.Context, o client.Object) []reconcile.Request {
+		crd, ok := o.(*apiextensionsv1.CustomResourceDefinition)
+		if !ok {
+			logger.Warn("ServiceMonitor CRD handler received an object that is not a CustomResourceDefinition")
+			return nil
+		}
+
+		if crd.Name != serviceMonitorCRD {
+			logger.Warnf("ServiceMonitor CRD handler received an unexpected CRD %q", crd.Name)
+			return nil
+		}
+
+		pcl := &tsapi.ProxyClassList{}
+		if err := cl.List(ctx, pcl); err != nil {
+			logger.Errorf("failed to list ProxyClass resources: %v", err)
+			return nil
+		}
+
+		reqs := make([]reconcile.Request, 0)
+		for _, pc := range pcl.Items {
+			if pc.Spec.Metrics != nil && pc.Spec.Metrics.ServiceMonitor != nil && pc.Spec.Metrics.ServiceMonitor.Enable {
+				reqs = append(reqs, reconcile.Request{
+					NamespacedName: types.NamespacedName{Namespace: pc.Namespace, Name: pc.Name},
+				})
+			}
+		}
+
 		return reqs
 	}
 }

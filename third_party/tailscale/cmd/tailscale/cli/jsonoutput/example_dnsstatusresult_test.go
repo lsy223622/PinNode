@@ -1,7 +1,7 @@
 // Copyright (c) Tailscale Inc & contributors
 // SPDX-License-Identifier: BSD-3-Clause
 
-package tsdnsjsonv0_test
+package jsonoutput_test
 
 import (
 	"encoding/json"
@@ -10,10 +10,10 @@ import (
 	"os"
 	"os/exec"
 
-	"tailscale.com/cmd/tailscale/tsdnsjsonv0"
+	"tailscale.com/cmd/tailscale/cli/jsonoutput"
 )
 
-func ExampleStatusResponse() {
+func ExampleDNSStatusResult() {
 	cmd := exec.Command("tailscale", "dns", "status", "--json")
 	out, err := cmd.Output()
 	if err != nil {
@@ -23,9 +23,9 @@ func ExampleStatusResponse() {
 		panic(err)
 	}
 
-	var resp tsdnsjsonv0.StatusResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
+	var dnsStatus jsonoutput.DNSStatusResult
+	if err := json.Unmarshal(out, &dnsStatus); err != nil {
 		panic(err)
 	}
-	fmt.Printf("{accept-dns: %t, resolvers: %q}\n", resp.TailscaleDNS, resp.Resolvers)
+	fmt.Printf("{accept-dns: %t, resolvers: %q}\n", dnsStatus.TailscaleDNS, dnsStatus.Resolvers)
 }

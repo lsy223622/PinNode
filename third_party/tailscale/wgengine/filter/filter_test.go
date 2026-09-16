@@ -23,8 +23,6 @@ import (
 	"tailscale.com/net/packet"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/tstest"
 	"tailscale.com/tstime/rate"
 	"tailscale.com/types/ipproto"
@@ -49,12 +47,12 @@ const (
 // or tailcfg.NodeCapability values. Other values panic.
 func m(srcs []netip.Prefix, dsts []NetPortRange, opts ...any) Match {
 	var protos []ipproto.Proto
-	var caps []nodecap.Cap
+	var caps []tailcfg.NodeCapability
 	for _, o := range opts {
 		switch o := o.(type) {
 		case ipproto.Proto:
 			protos = append(protos, o)
-		case nodecap.Cap:
+		case tailcfg.NodeCapability:
 			caps = append(caps, o)
 		default:
 			panic(fmt.Sprintf("unknown option type %T", o))
@@ -85,7 +83,7 @@ func newFilter(logf logger.Logf) *Filter {
 		m(nets("::/0"), netports("::/0:443")),
 		m(nets("0.0.0.0/0"), netports("0.0.0.0/0:*"), testAllowedProto),
 		m(nets("::/0"), netports("::/0:*"), testAllowedProto),
-		m(nil, netports("1.2.3.4:22"), nodecap.Cap("cap-hit-1234-ssh")),
+		m(nil, netports("1.2.3.4:22"), tailcfg.NodeCapability("cap-hit-1234-ssh")),
 	}
 
 	// Expects traffic to 100.122.98.50, 1.2.3.4, 5.6.7.8,
@@ -108,7 +106,7 @@ func TestFilter(t *testing.T) {
 
 	ipWithCap := netip.MustParseAddr("10.0.0.1")
 	ipWithoutCap := netip.MustParseAddr("10.0.0.2")
-	filt.srcIPHasCap = func(ip netip.Addr, cap nodecap.Cap) bool {
+	filt.srcIPHasCap = func(ip netip.Addr, cap tailcfg.NodeCapability) bool {
 		return cap == "cap-hit-1234-ssh" && ip == ipWithCap
 	}
 
@@ -315,7 +313,7 @@ func TestParseIPSet(t *testing.T) {
 
 	capTests := []struct {
 		in   string
-		want nodecap.Cap
+		want tailcfg.NodeCapability
 	}{
 		{"cap:foo", "foo"},
 		{"cap:people-in-8.8.8.0/24", "people-in-8.8.8.0/24"}, // test precedence of "/" search
@@ -992,7 +990,7 @@ func TestPeerCaps(t *testing.T) {
 				Dsts: []netip.Prefix{
 					netip.MustParsePrefix("0.0.0.0/0"),
 				},
-				Caps: []peercap.Cap{"is_ipv4"},
+				Caps: []tailcfg.PeerCapability{"is_ipv4"},
 			}},
 		},
 		{
@@ -1001,7 +999,7 @@ func TestPeerCaps(t *testing.T) {
 				Dsts: []netip.Prefix{
 					netip.MustParsePrefix("::/0"),
 				},
-				Caps: []peercap.Cap{"is_ipv6"},
+				Caps: []tailcfg.PeerCapability{"is_ipv6"},
 			}},
 		},
 		{
@@ -1010,7 +1008,7 @@ func TestPeerCaps(t *testing.T) {
 				Dsts: []netip.Prefix{
 					netip.MustParsePrefix("100.200.0.0/16"),
 				},
-				Caps: []peercap.Cap{"some_super_admin"},
+				Caps: []tailcfg.PeerCapability{"some_super_admin"},
 			}},
 		},
 	})
@@ -1021,37 +1019,37 @@ func TestPeerCaps(t *testing.T) {
 	tests := []struct {
 		name     string
 		src, dst string // IP
-		want     []peercap.Cap
+		want     []tailcfg.PeerCapability
 	}{
 		{
 			name: "v4",
 			src:  "1.2.3.4",
 			dst:  "2.4.5.5",
-			want: []peercap.Cap{"is_ipv4"},
+			want: []tailcfg.PeerCapability{"is_ipv4"},
 		},
 		{
 			name: "v6",
 			src:  "1::1",
 			dst:  "2::2",
-			want: []peercap.Cap{"is_ipv6"},
+			want: []tailcfg.PeerCapability{"is_ipv6"},
 		},
 		{
 			name: "admin",
 			src:  "100.199.1.2",
 			dst:  "100.200.3.4",
-			want: []peercap.Cap{"is_ipv4", "some_super_admin"},
+			want: []tailcfg.PeerCapability{"is_ipv4", "some_super_admin"},
 		},
 		{
 			name: "not_admin_bad_src",
 			src:  "100.198.1.2", // 198, not 199
 			dst:  "100.200.3.4",
-			want: []peercap.Cap{"is_ipv4"},
+			want: []tailcfg.PeerCapability{"is_ipv4"},
 		},
 		{
 			name: "not_admin_bad_dst",
 			src:  "100.199.1.2",
 			dst:  "100.201.3.4", // 201, not 200
-			want: []peercap.Cap{"is_ipv4"},
+			want: []tailcfg.PeerCapability{"is_ipv4"},
 		},
 	}
 	for _, tt := range tests {

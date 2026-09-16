@@ -23,7 +23,6 @@ import (
 	"go4.org/mem"
 	"go4.org/netipx"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/types/key"
 	"tailscale.com/util/deephash/testtype"
 	"tailscale.com/util/hashx"
@@ -646,7 +645,7 @@ var filterRules = []tailcfg.FilterRule{
 		IPProto: []int{1, 2, 3, 4},
 		CapGrant: []tailcfg.CapGrant{{
 			Dsts: []netip.Prefix{netip.MustParsePrefix("1.2.3.4/32")},
-			Caps: []peercap.Cap{"foo"},
+			Caps: []tailcfg.PeerCapability{"foo"},
 		}},
 	},
 	{

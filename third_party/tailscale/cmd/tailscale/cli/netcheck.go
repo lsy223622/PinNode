@@ -10,11 +10,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"maps"
 	"math"
 	"net/http"
 	"net/netip"
-	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -215,7 +214,21 @@ func printNetCheckReport(dm *tailcfg.DERPMap, report *netcheck.Report) error {
 			printf("\t* Nearest DERP: [none]\n")
 		}
 		printf("\t* DERP latency:\n")
-		rids := slices.SortedFunc(maps.Keys(dm.Regions), report.RegionLatency.Compare)
+		var rids []int
+		for rid := range dm.Regions {
+			rids = append(rids, rid)
+		}
+		sort.Slice(rids, func(i, j int) bool {
+			l1, ok1 := report.RegionLatency[rids[i]]
+			l2, ok2 := report.RegionLatency[rids[j]]
+			if ok1 != ok2 {
+				return ok1 // defined things sort first
+			}
+			if !ok1 {
+				return rids[i] < rids[j]
+			}
+			return l1 < l2
+		})
 		for _, rid := range rids {
 			d, ok := report.RegionLatency[rid]
 			var latency string

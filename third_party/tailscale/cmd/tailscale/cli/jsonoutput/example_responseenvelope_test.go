@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"tailscale.com/cmd/tailscale/jsonoutput"
+	"tailscale.com/cmd/tailscale/cli/jsonoutput"
 )
 
 type Hello struct {

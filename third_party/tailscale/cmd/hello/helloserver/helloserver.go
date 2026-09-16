@@ -16,7 +16,6 @@ import (
 	"tailscale.com/client/local"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 )
 
 //go:embed hello.tmpl.html
@@ -95,7 +94,7 @@ func tailscaleIP(who *apitype.WhoIsResponse) string {
 	if who == nil {
 		return ""
 	}
-	vals, err := tailcfg.UnmarshalNodeCapJSON[string](who.Node.CapMap, nodecap.NativeIPV4)
+	vals, err := tailcfg.UnmarshalNodeCapJSON[string](who.Node.CapMap, tailcfg.NodeAttrNativeIPV4)
 	if err == nil && len(vals) > 0 {
 		return vals[0]
 	}

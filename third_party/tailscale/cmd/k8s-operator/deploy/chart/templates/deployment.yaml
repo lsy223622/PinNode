@@ -4,7 +4,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   namespace: {{ .Release.Namespace }}
   {{- if .Values.annotations }}
   annotations: {{- toYaml .Values.annotations | nindent 4 }}
@@ -15,7 +15,7 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app: {{ include "tailscale-operator.fullname" . }}
+      app: operator
   template:
     metadata:
       {{- with .Values.operatorConfig.podAnnotations }}
@@ -23,7 +23,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        app: {{ include "tailscale-operator.fullname" . }}
+        app: operator
         {{- with .Values.operatorConfig.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -32,7 +32,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "tailscale-operator.fullname" . }}
+      serviceAccountName: operator
       {{- with .Values.operatorConfig.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -53,7 +53,7 @@ spec:
         {{- else }}
         - name: oauth
           secret:
-            secretName: {{ include "tailscale-operator.fullname" . }}-oauth
+            secretName: operator-oauth
         {{- end }}
       containers:
         - name: operator
@@ -74,7 +74,7 @@ spec:
             - name: OPERATOR_HOSTNAME
               value: {{ .Values.operatorConfig.hostname }}
             - name: OPERATOR_SECRET
-              value: {{ include "tailscale-operator.fullname" . }}
+              value: operator
             - name: OPERATOR_LOGGING
               value: {{ .Values.operatorConfig.logging }}
             - name: OPERATOR_NAMESPACE
@@ -124,8 +124,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.uid
-            - name: OPERATOR_SHARED_ACME_ACCOUNT_KEY
-              value: {{ .Values.operatorConfig.sharedACMEAccountKey | quote }}
             {{- with .Values.operatorConfig.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

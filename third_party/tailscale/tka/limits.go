@@ -21,7 +21,7 @@ const (
 	maxSyncIter = 2000
 
 	// Max iterations searching for a head intersection during the sync process.
-	maxSyncHeadIntersectionIter = 1000
+	maxSyncHeadIntersectionIter = 400
 
 	// Limit on scanning AUM trees, chosen arbitrarily.
 	maxScanIterations = 2000

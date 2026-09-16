@@ -35,7 +35,6 @@ import (
 	"tailscale.com/net/netx"
 	"tailscale.com/sessionrecording"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/tsnet"
 	"tailscale.com/util/clientmetric"
 	"tailscale.com/util/ctxkey"
@@ -502,7 +501,7 @@ const (
 	// that is respected for this form is group impersonation - for
 	// backwards compatibility reasons.
 	// TODO (irbekrm): determine if anyone uses this and remove if possible.
-	oldCapabilityName = "https://" + peercap.Kubernetes
+	oldCapabilityName = "https://" + tailcfg.PeerCapabilityKubernetes
 )
 
 // addImpersonationHeaders adds the appropriate headers to r to impersonate the
@@ -511,7 +510,7 @@ const (
 func addImpersonationHeaders(r *http.Request, log *zap.SugaredLogger) error {
 	log = log.With("remote", r.RemoteAddr)
 	who := whoIsKey.Value(r.Context())
-	rules, err := tailcfg.UnmarshalCapJSON[kubetypes.KubernetesCapRule](who.CapMap, peercap.Kubernetes)
+	rules, err := tailcfg.UnmarshalCapJSON[kubetypes.KubernetesCapRule](who.CapMap, tailcfg.PeerCapabilityKubernetes)
 	if len(rules) == 0 && err == nil {
 		// Try the old capability name for backwards compatibility.
 		rules, err = tailcfg.UnmarshalCapJSON[kubetypes.KubernetesCapRule](who.CapMap, oldCapabilityName)
@@ -572,7 +571,7 @@ func determineRecorderConfig(who *apitype.WhoIsResponse) (c recorderConfig, _ er
 
 	c.failOpen = true
 	c.enableEvents = false
-	rules, err := tailcfg.UnmarshalCapJSON[kubetypes.KubernetesCapRule](who.CapMap, peercap.Kubernetes)
+	rules, err := tailcfg.UnmarshalCapJSON[kubetypes.KubernetesCapRule](who.CapMap, tailcfg.PeerCapabilityKubernetes)
 	if err != nil {
 		return c, fmt.Errorf("failed to unmarshal Kubernetes capability: %w", err)
 	}

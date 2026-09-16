@@ -17,7 +17,6 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/net/udprelay/status"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tstest"
 	"tailscale.com/tstest/integration/testcontrol"
 	"tailscale.com/tstest/natlab/vmtest"
@@ -1117,10 +1116,10 @@ func TestCachedNetmapAfterRestart(t *testing.T) {
 
 	a := env.AddNode("a", aNet,
 		vmtest.OS(vmtest.Gokrazy),
-		tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
+		tailcfg.NodeCapMap{tailcfg.NodeAttrCacheNetworkMaps: nil})
 	b := env.AddNode("b", bNet,
 		vmtest.OS(vmtest.Gokrazy),
-		tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
+		tailcfg.NodeCapMap{tailcfg.NodeAttrCacheNetworkMaps: nil})
 
 	connectStep := env.AddStep("Establish initial TSMP tunnel")
 	cutControlStep := env.AddStep("Cut control server access")
@@ -1207,10 +1206,10 @@ func TestDirectConnectionWithCachedNetmapOnOneNode(t *testing.T) {
 			// Node "a" is the offline peer, node "b" is the online peer.
 			a := env.AddNode("a", aNet,
 				vmtest.OS(vmtest.Gokrazy),
-				tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
+				tailcfg.NodeCapMap{tailcfg.NodeAttrCacheNetworkMaps: nil})
 			b := env.AddNode("b", bNet,
 				vmtest.OS(vmtest.Gokrazy),
-				tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
+				tailcfg.NodeCapMap{tailcfg.NodeAttrCacheNetworkMaps: nil})
 
 			pStr := "Ping a → b"
 			if testPingFrom == "online" {
@@ -1296,10 +1295,10 @@ func TestDirectConnectionWithCachedNetmapOnTwoNodes(t *testing.T) {
 
 	a := env.AddNode("a", aNet,
 		vmtest.OS(vmtest.Gokrazy),
-		tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
+		tailcfg.NodeCapMap{tailcfg.NodeAttrCacheNetworkMaps: nil})
 	b := env.AddNode("b", bNet,
 		vmtest.OS(vmtest.Gokrazy),
-		tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
+		tailcfg.NodeCapMap{tailcfg.NodeAttrCacheNetworkMaps: nil})
 
 	checkInitialMetrics := env.AddStep("Check initial client metrics")
 	cutControlStep := env.AddStep("Cut control server access")
@@ -1315,7 +1314,6 @@ func TestDirectConnectionWithCachedNetmapOnTwoNodes(t *testing.T) {
 	checkClientMetrics(t, "Node A", env.ClientMetrics(a), map[string]int64{
 		"magicsock_cached_peer_contact_derp":   0,
 		"magicsock_cached_peer_contact_direct": 0,
-		"magicsock_tsmp_disco_key_advertisement_sent": 0,
 	})
 	checkInitialMetrics.End(nil)
 
@@ -1351,7 +1349,6 @@ func TestDirectConnectionWithCachedNetmapOnTwoNodes(t *testing.T) {
 	checkFinalMetrics.Begin()
 	checkClientMetrics(t, "Node A", env.ClientMetrics(a), map[string]int64{
 		"magicsock_cached_peer_contact_direct": 1,
-		"magicsock_tsmp_disco_key_advertisement_sent": 1,
 	})
 	checkFinalMetrics.End(nil)
 }

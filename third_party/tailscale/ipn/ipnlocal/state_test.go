@@ -407,8 +407,7 @@ func TestStartShutsDownPreviousControlClient(t *testing.T) {
 // predictable, but maybe a bit less thorough. This is more of an overall
 // state machine test than a test of the wgengine+magicsock integration.
 func TestStateMachine(t *testing.T) {
-	envknob.Setenv("TAILSCALE_USE_WIP_CODE", "1")
-	defer envknob.Setenv("TAILSCALE_USE_WIP_CODE", "")
+	envknob.SetenvForTest(t, "TAILSCALE_USE_WIP_CODE", "1")
 	c := qt.New(t)
 
 	logf := tstest.WhileTestRunningLogger(t)
@@ -2015,8 +2014,6 @@ func (e *mockEngine) ResetDevicePeer(key.NodePublic) {}
 func (e *mockEngine) SetPeerSessionStateFunc(func(key.NodePublic, wgengine.PeerWireGuardState)) {
 }
 func (e *mockEngine) SetNetLogSource(wgengine.NetLogSource)                            {}
-func (e *mockEngine) SetPeerPriorityMessageOnEstablishmentFunc(fn func(key.NodePublic) (msg []byte)) {
-}
 func (e *mockEngine) SetWGPeerLookup(func(wgString string) (tsString string, ok bool)) {}
 func (e *mockEngine) ProbeLocks()                                                      {}
 

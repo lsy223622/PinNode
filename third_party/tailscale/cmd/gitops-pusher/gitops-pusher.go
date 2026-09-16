@@ -83,11 +83,13 @@ func apply(cache *Cache, tailnet string) func(context.Context, []string) error {
 		}
 
 		if cache.PrevETag != controlEtag {
-			err := modifiedExternallyError()
-			if *failOnManualEdits {
-				return err
+			if err := modifiedExternallyError(); err != nil {
+				if *failOnManualEdits {
+					return err
+				} else {
+					fmt.Println(err)
+				}
 			}
-			fmt.Println(err)
 		}
 
 		if err := applyNewACL(ctx, tailnet, *policyFname, controlEtag); err != nil {
@@ -127,11 +129,13 @@ func test(cache *Cache, tailnet string) func(context.Context, []string) error {
 		}
 
 		if cache.PrevETag != controlEtag {
-			err := modifiedExternallyError()
-			if *failOnManualEdits {
-				return err
+			if err := modifiedExternallyError(); err != nil {
+				if *failOnManualEdits {
+					return err
+				} else {
+					fmt.Println(err)
+				}
 			}
-			fmt.Println(err)
 		}
 
 		if err := testNewACLs(ctx, tailnet, *policyFname); err != nil {

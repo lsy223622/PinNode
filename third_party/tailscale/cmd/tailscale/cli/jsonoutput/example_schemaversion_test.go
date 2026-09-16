@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 
-	"tailscale.com/cmd/tailscale/jsonoutput"
+	"tailscale.com/cmd/tailscale/cli/jsonoutput"
 )
 
 var args struct {

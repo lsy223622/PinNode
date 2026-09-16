@@ -4,21 +4,17 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   namespace: {{ .Release.Namespace }}
   {{- with .Values.operatorConfig.serviceAccountAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-{{- with .Values.imagePullSecrets }}
-imagePullSecrets:
-  {{- toYaml . | nindent 2 }}
-{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "tailscale-operator.clusterResourceName" . }}
+  name: tailscale-operator
 rules:
 - apiGroups: [""]
   resources: ["nodes"]
@@ -64,20 +60,20 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "tailscale-operator.clusterResourceName" . }}
+  name: tailscale-operator
 subjects:
 - kind: ServiceAccount
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   namespace: {{ .Release.Namespace }}
 roleRef:
   kind: ClusterRole
-  name: {{ include "tailscale-operator.clusterResourceName" . }}
+  name: tailscale-operator
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   namespace: {{ .Release.Namespace }}
 rules:
 - apiGroups: [""]
@@ -85,7 +81,7 @@ rules:
   verbs: ["create","delete","deletecollection","get","list","patch","update","watch"]
 - apiGroups: [""]
   resources: ["serviceaccounts/token"]
-  resourceNames: ["{{ include "tailscale-operator.fullname" . }}"]
+  resourceNames: ["operator"]
   verbs: ["create"]
 - apiGroups: [""]
   resources: ["pods"]
@@ -109,13 +105,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   namespace: {{ .Release.Namespace }}
 subjects:
 - kind: ServiceAccount
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   namespace: {{ .Release.Namespace }}
 roleRef:
   kind: Role
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   apiGroup: rbac.authorization.k8s.io

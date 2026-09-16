@@ -20,7 +20,6 @@ import (
 	"tailscale.com/hostinfo"
 	"tailscale.com/ipn/ipnlocal"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/util/clientmetric"
 )
 
@@ -91,7 +90,7 @@ func canWakeOnLAN(h ipnlocal.PeerAPIHandler) bool {
 	if h.Peer().UnsignedPeerAPIOnly() {
 		return false
 	}
-	return h.IsSelfUntagged() || h.PeerCaps().HasCapability(peercap.WakeOnLAN)
+	return h.IsSelfUntagged() || h.PeerCaps().HasCapability(tailcfg.PeerCapabilityWakeOnLAN)
 }
 
 var metricWakeOnLANCalls = clientmetric.NewCounter("peerapi_wol")

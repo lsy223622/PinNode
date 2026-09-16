@@ -10,7 +10,6 @@ import (
 	"net/netip"
 	"time"
 
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 	"tailscale.com/types/opt"
@@ -60,7 +59,7 @@ func (src *Node) Clone() *Node {
 	}
 	dst.Capabilities = append(src.Capabilities[:0:0], src.Capabilities...)
 	if dst.CapMap != nil {
-		dst.CapMap = map[nodecap.Cap][]RawMessage{}
+		dst.CapMap = map[NodeCapability][]RawMessage{}
 		for k := range src.CapMap {
 			dst.CapMap[k] = append([]RawMessage{}, src.CapMap[k]...)
 		}
@@ -109,7 +108,7 @@ var _NodeCloneNeedsRegeneration = Node(struct {
 	LastSeen                      *time.Time
 	Online                        *bool
 	MachineAuthorized             bool
-	Capabilities                  []nodecap.Cap
+	Capabilities                  []NodeCapability
 	CapMap                        NodeCapMap
 	UnsignedPeerAPIOnly           bool
 	ComputedName                  string

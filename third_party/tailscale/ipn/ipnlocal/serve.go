@@ -40,7 +40,6 @@ import (
 	"tailscale.com/net/netutil"
 	"tailscale.com/syncs"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/types/lazy"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/views"
@@ -93,7 +92,7 @@ type serveHTTPContext struct {
 	// provides funnel-specific context, nil if not funneled
 	Funnel *funnelFlow
 	// AppCapabilities lists all PeerCapabilities that should be forwarded by serve
-	AppCapabilities views.Slice[peercap.Cap]
+	AppCapabilities views.Slice[tailcfg.PeerCapability]
 }
 
 // funnelFlow represents a funneled connection initiated via IngressPeer
@@ -222,13 +221,14 @@ func (s *localListener) Run() {
 		s.closeListener.Store(ln.Close)
 
 		s.logf("listening on %v", s.ap)
-		// handleListenersAccept always returns a non-nil error.
 		err = s.handleListenersAccept(ln)
 		if s.ctx.Err() != nil {
 			// context canceled, we're done
 			return
 		}
-		s.logf("localListener accept error, retrying: %v", err)
+		if err != nil {
+			s.logf("localListener accept error, retrying: %v", err)
+		}
 	}
 }
 
@@ -1138,7 +1138,7 @@ func (b *LocalBackend) addAppCapabilitiesHeader(r *httputil.ProxyRequest) error 
 		return nil
 	}
 
-	peerCapsFiltered := make(map[peercap.Cap][]tailcfg.RawMessage, acceptCaps.Len())
+	peerCapsFiltered := make(map[tailcfg.PeerCapability][]tailcfg.RawMessage, acceptCaps.Len())
 	for _, cap := range acceptCaps.AsSlice() {
 		if peerCaps.HasCapability(cap) {
 			peerCapsFiltered[cap] = peerCaps[cap]

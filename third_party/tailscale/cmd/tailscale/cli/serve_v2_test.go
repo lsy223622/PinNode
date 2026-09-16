@@ -24,8 +24,6 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/types/views"
 )
 
@@ -888,8 +886,8 @@ func TestServeDevConfigMutations(t *testing.T) {
 					Self: &ipnstate.PeerStatus{
 						DNSName: "foo.test.ts.net",
 						CapMap: tailcfg.NodeCapMap{
-							nodecap.Funnel:                          nil,
-							nodecap.FunnelPorts + "?ports=443,8443": nil,
+							tailcfg.NodeAttrFunnel:                            nil,
+							tailcfg.CapabilityFunnelPorts + "?ports=443,8443": nil,
 						},
 						Tags: ptrToReadOnlySlice([]string{"some-tag"}),
 					},
@@ -933,7 +931,7 @@ func TestServeDevConfigMutations(t *testing.T) {
 							"foo.test.ts.net:443": {Handlers: map[string]*ipn.HTTPHandler{
 								"/": {
 									Proxy:         "http://127.0.0.1:3000",
-									AcceptAppCaps: []peercap.Cap{"example.com/cap/foo"},
+									AcceptAppCaps: []tailcfg.PeerCapability{"example.com/cap/foo"},
 								},
 							}},
 						},
@@ -947,7 +945,7 @@ func TestServeDevConfigMutations(t *testing.T) {
 							"foo.test.ts.net:443": {Handlers: map[string]*ipn.HTTPHandler{
 								"/": {
 									Proxy:         "http://127.0.0.1:3000",
-									AcceptAppCaps: []peercap.Cap{"example.com/cap/foo", "example.com/cap/bar"},
+									AcceptAppCaps: []tailcfg.PeerCapability{"example.com/cap/foo", "example.com/cap/bar"},
 								},
 							}},
 						},
@@ -961,7 +959,7 @@ func TestServeDevConfigMutations(t *testing.T) {
 							"foo.test.ts.net:443": {Handlers: map[string]*ipn.HTTPHandler{
 								"/": {
 									Proxy:         "http://127.0.0.1:3000",
-									AcceptAppCaps: []peercap.Cap{"example.com/cap/bar"},
+									AcceptAppCaps: []tailcfg.PeerCapability{"example.com/cap/bar"},
 								},
 							}},
 						},
@@ -1191,37 +1189,37 @@ func TestAcceptSetAppCapsFlag(t *testing.T) {
 		inputs           []string
 		expectErr        bool
 		expectErrToMatch *regexp.Regexp
-		expectedValue    []peercap.Cap
+		expectedValue    []tailcfg.PeerCapability
 	}{
 		{
 			name:          "valid_simple",
 			inputs:        []string{"example.com/name"},
 			expectErr:     false,
-			expectedValue: []peercap.Cap{"example.com/name"},
+			expectedValue: []tailcfg.PeerCapability{"example.com/name"},
 		},
 		{
 			name:          "valid_unicode",
 			inputs:        []string{"bücher.de/something"},
 			expectErr:     false,
-			expectedValue: []peercap.Cap{"bücher.de/something"},
+			expectedValue: []tailcfg.PeerCapability{"bücher.de/something"},
 		},
 		{
 			name:          "more_valid_unicode",
 			inputs:        []string{"example.tw/某某某"},
 			expectErr:     false,
-			expectedValue: []peercap.Cap{"example.tw/某某某"},
+			expectedValue: []tailcfg.PeerCapability{"example.tw/某某某"},
 		},
 		{
 			name:          "valid_path_slashes",
 			inputs:        []string{"domain.com/path/to/name"},
 			expectErr:     false,
-			expectedValue: []peercap.Cap{"domain.com/path/to/name"},
+			expectedValue: []tailcfg.PeerCapability{"domain.com/path/to/name"},
 		},
 		{
 			name:          "valid_multiple_sets",
 			inputs:        []string{"one.com/foo,two.com/bar"},
 			expectErr:     false,
-			expectedValue: []peercap.Cap{"one.com/foo", "two.com/bar"},
+			expectedValue: []tailcfg.PeerCapability{"one.com/foo", "two.com/bar"},
 		},
 		{
 			name:          "valid_empty_string",
@@ -1240,7 +1238,7 @@ func TestAcceptSetAppCapsFlag(t *testing.T) {
 			name:          "valid_subdomain",
 			inputs:        []string{"sub.domain.com/name"},
 			expectErr:     false,
-			expectedValue: []peercap.Cap{"sub.domain.com/name"},
+			expectedValue: []tailcfg.PeerCapability{"sub.domain.com/name"},
 		},
 		{
 			name:             "invalid_no_path",
@@ -1261,13 +1259,13 @@ func TestAcceptSetAppCapsFlag(t *testing.T) {
 			inputs:           []string{"one.com/foo,bad/bar,two.com/baz"},
 			expectErr:        true,
 			expectErrToMatch: regexp.MustCompile(`"bad/bar"`),
-			expectedValue:    []peercap.Cap{"one.com/foo"}, // Parsing will stop after first error
+			expectedValue:    []tailcfg.PeerCapability{"one.com/foo"}, // Parsing will stop after first error
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var v []peercap.Cap
+			var v []tailcfg.PeerCapability
 			flag := &acceptAppCapsFlag{Value: &v}
 
 			var err error
@@ -1533,7 +1531,7 @@ func TestMessageForPort(t *testing.T) {
 				CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "test.ts.net"},
 				Self: &ipnstate.PeerStatus{
 					CapMap: tailcfg.NodeCapMap{
-						nodecap.ServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
+						tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
 					},
 				},
 			},
@@ -1577,7 +1575,7 @@ func TestMessageForPort(t *testing.T) {
 				CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "test.ts.net"},
 				Self: &ipnstate.PeerStatus{
 					CapMap: tailcfg.NodeCapMap{
-						nodecap.ServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
+						tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
 					},
 				},
 			},
@@ -1621,7 +1619,7 @@ func TestMessageForPort(t *testing.T) {
 				CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "test.ts.net"},
 				Self: &ipnstate.PeerStatus{
 					CapMap: tailcfg.NodeCapMap{
-						nodecap.ServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
+						tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
 					},
 				},
 			},
@@ -1656,7 +1654,7 @@ func TestMessageForPort(t *testing.T) {
 				CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "test.ts.net"},
 				Self: &ipnstate.PeerStatus{
 					CapMap: tailcfg.NodeCapMap{
-						nodecap.ServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
+						tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
 					},
 				},
 			},
@@ -1691,7 +1689,7 @@ func TestMessageForPort(t *testing.T) {
 				CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "test.ts.net"},
 				Self: &ipnstate.PeerStatus{
 					CapMap: tailcfg.NodeCapMap{
-						nodecap.ServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
+						tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{svcIPMapJSONRawMSG},
 					},
 				},
 			},

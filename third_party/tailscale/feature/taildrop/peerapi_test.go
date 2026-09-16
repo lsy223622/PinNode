@@ -21,7 +21,6 @@ import (
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnlocal"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tstest"
 	"tailscale.com/tstime"
 	"tailscale.com/types/logger"
@@ -482,7 +481,7 @@ func TestHandlePeerAPI(t *testing.T) {
 				},
 			}
 			if tt.debugCap {
-				selfNode.CapMap = tailcfg.NodeCapMap{nodecap.Debug: nil}
+				selfNode.CapMap = tailcfg.NodeCapMap{tailcfg.CapabilityDebug: nil}
 			}
 			var rootDir string
 			var fo FileOps

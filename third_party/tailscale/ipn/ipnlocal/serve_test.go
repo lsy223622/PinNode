@@ -33,8 +33,6 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/store/mem"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/tsd"
 	"tailscale.com/tstest"
 	"tailscale.com/types/logger"
@@ -397,7 +395,7 @@ func TestServeConfigServices(t *testing.T) {
 		SelfNode: (&tailcfg.Node{
 			Name: "example.ts.net",
 			CapMap: tailcfg.NodeCapMap{
-				nodecap.ServiceHost: []tailcfg.RawMessage{tailcfg.RawMessage(svcIPMapJSON)},
+				tailcfg.NodeAttrServiceHost: []tailcfg.RawMessage{tailcfg.RawMessage(svcIPMapJSON)},
 			},
 		}).View(),
 		UserProfiles: map[tailcfg.UserID]tailcfg.UserProfileView{
@@ -895,7 +893,7 @@ func TestServeHTTPProxyGrantHeader(t *testing.T) {
 			"example.ts.net:443": {Handlers: map[string]*ipn.HTTPHandler{
 				"/": {
 					Proxy:         testServ.URL,
-					AcceptAppCaps: []peercap.Cap{"example.com/cap/interesting", "example.com/cap/boring"},
+					AcceptAppCaps: []tailcfg.PeerCapability{"example.com/cap/interesting", "example.com/cap/boring"},
 				},
 			}},
 		},

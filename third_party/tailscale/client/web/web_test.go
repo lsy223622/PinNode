@@ -26,7 +26,6 @@ import (
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/memnet"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/types/views"
 	"tailscale.com/util/httpm"
 	"tailscale.com/util/syspolicy/policyclient"
@@ -106,7 +105,7 @@ func TestServeAPI(t *testing.T) {
 			remoteIPWithAllCapabilities: {
 				Node:        &tailcfg.Node{StableID: "node1"},
 				UserProfile: remoteUser,
-				CapMap:      tailcfg.PeerCapMap{peercap.WebUI: []tailcfg.RawMessage{"{\"canEdit\":[\"*\"]}"}},
+				CapMap:      tailcfg.PeerCapMap{tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{"{\"canEdit\":[\"*\"]}"}},
 			},
 			remoteIPWithNoCapabilities: {
 				Node:        &tailcfg.Node{StableID: "node2"},
@@ -1249,7 +1248,7 @@ func TestPeerCapabilities(t *testing.T) {
 				UserProfile: &tailcfg.UserProfile{ID: tailcfg.UserID(2)},
 				Node:        &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canEdit\":[\"ssh\",\"subnets\"]}",
 					},
 				},
@@ -1263,7 +1262,7 @@ func TestPeerCapabilities(t *testing.T) {
 				UserProfile: &tailcfg.UserProfile{ID: tailcfg.UserID(1)},
 				Node:        &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canEdit\":[\"ssh\",\"subnets\"]}",
 					},
 				},
@@ -1276,7 +1275,7 @@ func TestPeerCapabilities(t *testing.T) {
 			whois: &apitype.WhoIsResponse{
 				Node: &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.DebugPeer: []tailcfg.RawMessage{},
+					tailcfg.PeerCapabilityDebugPeer: []tailcfg.RawMessage{},
 				},
 			},
 			wantCaps: peerCapabilities{},
@@ -1287,7 +1286,7 @@ func TestPeerCapabilities(t *testing.T) {
 			whois: &apitype.WhoIsResponse{
 				Node: &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canEdit\":[\"ssh\",\"subnets\"]}",
 					},
 				},
@@ -1303,7 +1302,7 @@ func TestPeerCapabilities(t *testing.T) {
 			whois: &apitype.WhoIsResponse{
 				Node: &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canEdit\":[\"ssh\",\"subnets\"]}",
 						"{\"canEdit\":[\"subnets\",\"exitnodes\",\"*\"]}",
 					},
@@ -1322,7 +1321,7 @@ func TestPeerCapabilities(t *testing.T) {
 			whois: &apitype.WhoIsResponse{
 				Node: &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canEdit\":[\"SSH\",\"sUBnets\"]}",
 					},
 				},
@@ -1338,7 +1337,7 @@ func TestPeerCapabilities(t *testing.T) {
 			whois: &apitype.WhoIsResponse{
 				Node: &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canEdit\":[\"unknown-feature\"]}",
 					},
 				},
@@ -1351,7 +1350,7 @@ func TestPeerCapabilities(t *testing.T) {
 			whois: &apitype.WhoIsResponse{
 				Node: &tailcfg.Node{ID: tailcfg.NodeID(1)},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canDoSomething\":[\"*\"]}",
 					},
 				},
@@ -1364,7 +1363,7 @@ func TestPeerCapabilities(t *testing.T) {
 			whois: &apitype.WhoIsResponse{
 				Node: &tailcfg.Node{ID: tailcfg.NodeID(1), Tags: tags.AsSlice()},
 				CapMap: tailcfg.PeerCapMap{
-					peercap.WebUI: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityWebUI: []tailcfg.RawMessage{
 						"{\"canEdit\":[\"ssh\",\"subnets\"]}",
 					},
 				},

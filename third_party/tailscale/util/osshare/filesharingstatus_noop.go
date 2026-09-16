@@ -3,8 +3,6 @@
 
 //go:build !windows
 
-//lint:file-ignore ST1000 see filesharingstatus_windows.go
-
 package osshare
 
 import (

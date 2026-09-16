@@ -17,7 +17,6 @@ import (
 	"iter"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -27,6 +26,7 @@ import (
 	"go4.org/netipx"
 	"golang.org/x/net/dns/dnsmessage"
 	"tailscale.com/appc"
+	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnext"
@@ -45,6 +45,7 @@ import (
 	"tailscale.com/util/dnsname"
 	"tailscale.com/util/mak"
 	"tailscale.com/util/set"
+	"tailscale.com/util/testenv"
 	"tailscale.com/wgengine/filter"
 )
 
@@ -89,18 +90,24 @@ func init() {
 }
 
 func handleConnectorTransitIP(h ipnlocal.PeerAPIHandler, w http.ResponseWriter, r *http.Request) {
+	// TODO(tailscale/corp#39033): Remove for alpha release.
+	if !envknob.UseWIPCode() && !testenv.InTest() {
+		w.WriteHeader(http.StatusNotImplemented)
+		return
+	}
 	e, ok := ipnlocal.GetExt[*extension](h.LocalBackend())
 	if !ok {
 		http.Error(w, "miswired", http.StatusInternalServerError)
 		return
 	}
-	if !e.conn25.isConfigured() {
-		http.Error(w, "conn25 not configured", http.StatusServiceUnavailable)
-	}
 	e.handleConnectorTransitIP(h, w, r)
 }
 
 func handleHookReplyToDNSQueries(h ipnlocal.PeerAPIHandler) bool {
+	// TODO(tailscale/corp#39033): Remove for alpha release.
+	if !envknob.UseWIPCode() && !testenv.InTest() {
+		return false
+	}
 	e, ok := ipnlocal.GetExt[*extension](h.LocalBackend())
 	if !ok {
 		return false
@@ -111,9 +118,8 @@ func handleHookReplyToDNSQueries(h ipnlocal.PeerAPIHandler) bool {
 // extension is an [ipnext.Extension] managing the connector on platforms
 // that import this package.
 type extension struct {
-	conn25                *Conn25            // safe for concurrent access and only set at creation
-	backend               ipnext.SafeBackend // safe for concurrent access and only set at creation
-	clearAllDatapathFlows func()             // safe for concurrent access and only set at creation
+	conn25  *Conn25            // safe for concurrent access and only set at creation
+	backend ipnext.SafeBackend // safe for concurrent access and only set at creation
 
 	host      ipnext.Host             // set in Init, read-only after
 	ctxCancel context.CancelCauseFunc // cancels sendLoop goroutine
@@ -126,6 +132,11 @@ func (e *extension) Name() string {
 
 // Init implements [ipnext.Extension].
 func (e *extension) Init(host ipnext.Host) error {
+	// TODO(tailscale/corp#39033): Remove for alpha release.
+	if !envknob.UseWIPCode() && !testenv.InTest() {
+		return ipnext.SkipExtension
+	}
+
 	if e.ctxCancel != nil {
 		return nil
 	}
@@ -181,7 +192,7 @@ func (e *extension) installHooks(dph *datapathHandler) error {
 		if urlBase == "" {
 			return "", nil
 		}
-		return fmt.Sprintf("%s/dns-query?app=%s", urlBase, url.QueryEscape(app.Name)), nil
+		return urlBase + "/dns-query", nil
 	}); err != nil {
 		return fmt.Errorf("could not register DNS resolver scheme: %w", err)
 	}
@@ -215,11 +226,6 @@ func (e *extension) installHooks(dph *datapathHandler) error {
 		}
 		e.conn25.client.resendTransitIPMapping(pkt.Dst.Addr())
 	}
-
-	// The profile state change hook needs to clear all active flows on a
-	// major change (eg. switching tailnets), so make that hook accessible
-	// to it.
-	e.clearAllDatapathFlows = dph.ClearAllActiveFlows
 
 	// Manage how we react to changes to the current node,
 	// including property changes (e.g. HostInfo, Capabilities, CapMap).
@@ -386,27 +392,9 @@ func (e *extension) onSelfChange(selfNode tailcfg.NodeView) {
 
 // profileStateChange implements the [ipnext.Hooks.ProfileStateChange] hook.
 func (e *extension) profileStateChange(loginProfile ipn.LoginProfileView, prefs ipn.PrefsView, sameNode bool) {
+	// TODO(mzb): Handle node changes. Wipe out all config?
+	// We'll need to look at the ordering of this hook and onSelfChange.
 	e.conn25.prefsAdvertiseConnector.Store(prefs.AppConnector().Advertise)
-
-	if !sameNode {
-		// Load an empty configuration to disable conn25 entirely, since we
-		// don't yet know that it is configured on the new profile. We will
-		// know once [extension.onSelfChange] is called with a new
-		// configuration, if any.
-		e.conn25.reconfig(&config{})
-
-		// If a client changes profiles and becomes a different node, all of its
-		// existing flows lose meaning, and we should delete them so that the
-		// settings of our new environment can take over.
-		if e.clearAllDatapathFlows != nil {
-			e.clearAllDatapathFlows()
-		}
-
-		// Clear internal state, like address assignments for clients and
-		// transit IP mappings for connectors.
-		e.conn25.client.reset()
-		e.conn25.connector.reset()
-	}
 }
 
 func (e *extension) extraWireGuardAllowedIPs(k key.NodePublic) views.Slice[netip.Prefix] {
@@ -764,7 +752,6 @@ type client struct {
 	addrsCh   chan addrs
 	getIPSets func() ipSets
 
-	// Remember to add new fields to [client.reset] if needed.
 	mu              sync.Mutex // protects the fields below
 	v4MagicIPPool   *ippool
 	v4TransitIPPool *ippool
@@ -816,21 +803,6 @@ func (c *client) reconfig() {
 	c.v4TransitIPPool = c.v4TransitIPPool.reconfig(ipSets.v4Transit)
 	c.v6MagicIPPool = c.v6MagicIPPool.reconfig(ipSets.v6Magic)
 	c.v6TransitIPPool = c.v6TransitIPPool.reconfig(ipSets.v6Transit)
-}
-
-// reset clears all internal state of [client], that are not configuration
-// passed into it.
-func (c *client) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	ipSets := c.getIPSets()
-	c.v4MagicIPPool = newIPPool(ipSets.v4Magic)
-	c.v4TransitIPPool = newIPPool(ipSets.v4Transit)
-	c.v6MagicIPPool = newIPPool(ipSets.v6Magic)
-	c.v6TransitIPPool = newIPPool(ipSets.v6Transit)
-	c.assignments = addrAssignments{clock: c.assignments.clock}
-	c.byConnKey = nil
 }
 
 // getAppsForConnectorDomain returns the slice of app names which match the
@@ -1187,23 +1159,10 @@ func (c *Conn25) mapDNSResponse(buf []byte) []byte {
 	//  * write the questions through as they are
 	//  * not send through the additional section
 	//  * provide our answers, or no answers if we don't handle those answers (possibly in the future we should write through answers for eg TypeTXT)
-	//   * We handle A, AAAA and HTTPS type questions
-	//   * We drop all others
-
-	// Question Type HTTPS
-	if question.Type == dnsmessage.TypeHTTPS {
-		newBuf, err := rewriteHTTPSResponse(hdr, questions, &p)
-		if err != nil {
-			metricDNSResponseRewriteErrorServfail.Add(1)
-			c.logf("error rewriting HTTPS dns response: %v", err)
-			return makeServFail(c.logf, hdr, question)
-		}
-		return newBuf
-	}
-
-	// Other Question Types dropped
+	var answers []dnsResponseRewrite
+	var cnameChain map[dnsname.FQDN]dnsname.FQDN
 	if question.Type != dnsmessage.TypeA && question.Type != dnsmessage.TypeAAAA {
-		newBuf, err := c.client.rewriteDNSResponse(appName, hdr, questions, []dnsResponseRewrite{})
+		newBuf, err := c.client.rewriteDNSResponse(appName, hdr, questions, answers)
 		if err != nil {
 			metricDNSResponseRewriteUnsupportedQuestionTypeErrorServfail.Add(1)
 			c.logf("error writing empty response for unsupported type: %v", err)
@@ -1211,10 +1170,6 @@ func (c *Conn25) mapDNSResponse(buf []byte) []byte {
 		}
 		return newBuf
 	}
-
-	// Question Type A/AAAA
-	var answers []dnsResponseRewrite
-	var cnameChain map[dnsname.FQDN]dnsname.FQDN
 	for {
 		h, err := p.AnswerHeader()
 		if err == dnsmessage.ErrSectionDone {
@@ -1377,58 +1332,10 @@ func (c *client) rewriteDNSResponse(appName string, hdr dnsmessage.Header, quest
 	return out, nil
 }
 
-// rewriteHTTPSResponse writes through the HTTPS (type 65) answers in a DNS
-// response, stripping the ipv4hint/ipv6hint SvcParams (not obvious if we
-// should replace with magic IPs). p must be positioned at the start of the
-// answer section (i.e. questions already consumed). The additional section is
-// dropped.
-func rewriteHTTPSResponse(hdr dnsmessage.Header, questions []dnsmessage.Question, p *dnsmessage.Parser) ([]byte, error) {
-	b := dnsmessage.NewBuilder(nil, hdr)
-	b.EnableCompression()
-	if err := b.StartQuestions(); err != nil {
-		return nil, err
-	}
-	for _, q := range questions {
-		if err := b.Question(q); err != nil {
-			return nil, err
-		}
-	}
-	if err := b.StartAnswers(); err != nil {
-		return nil, err
-	}
-	for {
-		h, err := p.AnswerHeader()
-		if err == dnsmessage.ErrSectionDone {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if h.Type != dnsmessage.TypeHTTPS {
-			// Only HTTPS records are expected in an HTTPS response; drop anything else.
-			if err := p.SkipAnswer(); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		r, err := p.HTTPSResource()
-		if err != nil {
-			return nil, err
-		}
-		r.DeleteParam(dnsmessage.SVCParamIPv4Hint)
-		r.DeleteParam(dnsmessage.SVCParamIPv6Hint)
-		if err := b.HTTPSResource(h, r); err != nil {
-			return nil, err
-		}
-	}
-	return b.Finish()
-}
-
 type connector struct {
 	logf      logger.Logf
 	getIPSets func() ipSets
 
-	// Remember to add new fields to [connector.reset] if needed.
 	mu sync.Mutex // protects the fields below
 	// transitIPs is a map of connector client peer IP -> client transitIPs that we update as connector client peers instruct us to, and then use to route traffic to its destination on behalf of connector clients.
 	// Note that each peer could potentially have two maps: one for its IPv4 address, and one for its IPv6 address. The transit IPs map for a given peer IP will contain transit IPs of the same family as the peer's IP.
@@ -1471,15 +1378,6 @@ func (c *connector) lookupBySrcIPAndTransitIP(srcIP, transitIP netip.Addr) (appA
 	}
 	v, ok := m[transitIP]
 	return v, ok
-}
-
-// reset clears all internal state of [connector], that are not configuration
-// passed into it.
-func (c *connector) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.transitIPs = make(map[netip.Addr]map[netip.Addr]appAddr)
 }
 
 type addrs struct {

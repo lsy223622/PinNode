@@ -10,10 +10,6 @@ kind: ServiceAccount
 metadata:
   name: kube-apiserver-auth-proxy
   namespace: {{ .Release.Namespace }}
-{{- with .Values.imagePullSecrets }}
-imagePullSecrets:
-  {{- toYaml . | nindent 2 }}
-{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -31,7 +27,7 @@ metadata:
 subjects:
 {{- if eq (toString .Values.apiServerProxyConfig.mode) "true" }}
 - kind: ServiceAccount
-  name: {{ include "tailscale-operator.fullname" . }}
+  name: operator
   namespace: {{ .Release.Namespace }}
 {{- end }}
 - kind: ServiceAccount

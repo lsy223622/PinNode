@@ -3,9 +3,9 @@ module github.com/lsy223622/PinNode
 go 1.26.6
 
 require (
-	github.com/tailscale/wireguard-go v0.0.0-20260730222847-4affce44577c
+	github.com/tailscale/wireguard-go v0.0.0-20260715223240-2e01ba5b00f0
 	golang.org/x/mobile v0.0.0-20240806205939-81131f6468ab
-	tailscale.com v1.103.0-pre.0.20260810100007-25877455e79d
+	tailscale.com v1.102.4
 )
 
 // PinNode evaluates and patches this exact Tailscale core snapshot alongside
@@ -42,7 +42,7 @@ require (
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gaissmai/bart v0.26.1 // indirect
-	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go4org/hashtriemap v0.0.0-20251130024219-545ba229f689 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
@@ -84,7 +84,7 @@ require (
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/net v0.57.1-0.20260729233039-99c3b0a8f463 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

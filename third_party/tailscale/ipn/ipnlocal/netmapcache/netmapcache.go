@@ -24,7 +24,6 @@ import (
 
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/types/netmap"
 	"tailscale.com/util/mak"
 	"tailscale.com/util/set"
@@ -340,7 +339,7 @@ func (c *Cache) Load(ctx context.Context) (*netmap.NetworkMap, error) {
 	// If we successfully recovered a SelfNode, pull out its related fields.
 	if s := nm.SelfNode; s.Valid() {
 		nm.NodeKey = s.Key()
-		nm.AllCaps = make(set.Set[nodecap.Cap])
+		nm.AllCaps = make(set.Set[tailcfg.NodeCapability])
 		for _, c := range s.Capabilities().All() {
 			nm.AllCaps.Add(c)
 		}

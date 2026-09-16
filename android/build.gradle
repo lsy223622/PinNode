@@ -45,7 +45,7 @@ def preparePinnodeLicenseAssets = tasks.register('preparePinnodeLicenseAssets') 
 android {
     def androidApiLevel = providers.gradleProperty("androidApiLevel").get().toInteger()
 
-    ndkVersion "23.1.7779620"
+    ndkVersion "30.0.16248370"
     compileSdkVersion androidApiLevel
     defaultConfig {
         def pinnodeServerUrl = getLocalProperty("pinnode.serverUrl", "")

@@ -22,7 +22,6 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tstest"
 	"tailscale.com/types/logger"
 )
@@ -778,7 +777,7 @@ func TestVerifyFunnelEnabled(t *testing.T) {
 		// queryFeatureResponse is the mock response desired from the
 		// call made to lc.QueryFeature by verifyFunnelEnabled.
 		queryFeatureResponse mockQueryFeatureResponse
-		caps                 []nodecap.Cap // optionally set at fakeStatus.Capabilities
+		caps                 []tailcfg.NodeCapability // optionally set at fakeStatus.Capabilities
 		wantErr              string
 		wantPanic            string
 	}{
@@ -795,13 +794,13 @@ func TestVerifyFunnelEnabled(t *testing.T) {
 		{
 			name:                 "fallback-flow-missing-acl-rule",
 			queryFeatureResponse: mockQueryFeatureResponse{resp: nil, err: errors.New("not-allowed")},
-			caps:                 []nodecap.Cap{nodecap.HTTPS},
+			caps:                 []tailcfg.NodeCapability{tailcfg.CapabilityHTTPS},
 			wantErr:              `Funnel not available; "funnel" node attribute not set. See https://tailscale.com/s/no-funnel.`,
 		},
 		{
 			name:                 "fallback-flow-enabled",
 			queryFeatureResponse: mockQueryFeatureResponse{resp: nil, err: errors.New("not-allowed")},
-			caps:                 []nodecap.Cap{nodecap.HTTPS, nodecap.Funnel, "https://tailscale.com/cap/funnel-ports?ports=80,443,8080-8090"},
+			caps:                 []tailcfg.NodeCapability{tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel, "https://tailscale.com/cap/funnel-ports?ports=80,443,8080-8090"},
 			wantErr:              "", // no error, success
 		},
 		{
@@ -875,8 +874,8 @@ var fakeStatus = &ipnstate.Status{
 	Self: &ipnstate.PeerStatus{
 		DNSName: "foo.test.ts.net",
 		CapMap: tailcfg.NodeCapMap{
-			nodecap.Funnel:                          nil,
-			nodecap.FunnelPorts + "?ports=443,8443": nil,
+			tailcfg.NodeAttrFunnel:                            nil,
+			tailcfg.CapabilityFunnelPorts + "?ports=443,8443": nil,
 		},
 	},
 	CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "test.ts.net"},

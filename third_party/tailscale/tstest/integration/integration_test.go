@@ -45,7 +45,6 @@ import (
 	"tailscale.com/net/tstun"
 	"tailscale.com/net/udprelay/status"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tstest"
 	"tailscale.com/tstest/integration/testcontrol"
 	"tailscale.com/types/key"
@@ -1670,7 +1669,7 @@ func testAutoUpdateDefaults(t *testing.T, useCap bool) {
 				if mr.Node.CapMap == nil {
 					mr.Node.CapMap = make(tailcfg.NodeCapMap)
 				}
-				mr.Node.CapMap[nodecap.DefaultAutoUpdate] = []tailcfg.RawMessage{
+				mr.Node.CapMap[tailcfg.NodeAttrDefaultAutoUpdate] = []tailcfg.RawMessage{
 					tailcfg.RawMessage(fmt.Sprintf("%t", send)),
 				}
 			} else {
@@ -2501,7 +2500,7 @@ func TestTailnetLock(t *testing.T) {
 
 		env := NewTestEnv(t)
 		env.Control.DefaultNodeCapabilities = &tailcfg.NodeCapMap{
-			nodecap.TailnetLock: []tailcfg.RawMessage{},
+			tailcfg.CapabilityTailnetLock: []tailcfg.RawMessage{},
 		}
 
 		// Start two nodes which will be our signing nodes.

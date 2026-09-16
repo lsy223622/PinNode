@@ -1,17 +1,10 @@
 // Copyright (c) Tailscale Inc & contributors
 // SPDX-License-Identifier: BSD-3-Clause
 
-package tsdnsjsonv0
+package jsonoutput
 
-// ExtraRecord is the JSON form of [tailscale.com/tailcfg.DNSRecord].
-type ExtraRecord struct {
-	Name  string
-	Type  string `json:",omitempty"` // empty means A or AAAA, depending on Value
-	Value string // typically an IP address
-}
-
-// ResolverInfo is the JSON form of [tailscale.com/types/dnstype.Resolver].
-type ResolverInfo struct {
+// DNSResolverInfo is the JSON form of [tailscale.com/types/dnstype.Resolver].
+type DNSResolverInfo struct {
 	// Addr is a plain IP, IP:port, DoH URL, or HTTP-over-WireGuard URL.
 	Addr string
 
@@ -20,9 +13,16 @@ type ResolverInfo struct {
 	BootstrapResolution []string `json:",omitempty"`
 }
 
-// SystemConfig is the OS DNS configuration as observed by Tailscale,
+// DNSExtraRecord is the JSON form of [tailscale.com/tailcfg.DNSRecord].
+type DNSExtraRecord struct {
+	Name  string
+	Type  string `json:",omitempty"` // empty means A or AAAA, depending on Value
+	Value string // typically an IP address
+}
+
+// DNSSystemConfig is the OS DNS configuration as observed by Tailscale,
 // mirroring [tailscale.com/net/dns.OSConfig].
-type SystemConfig struct {
+type DNSSystemConfig struct {
 	Nameservers   []string `json:",omitzero"`
 	SearchDomains []string `json:",omitzero"`
 
@@ -32,10 +32,10 @@ type SystemConfig struct {
 	MatchDomains []string `json:",omitzero"`
 }
 
-// TailnetInfo describes MagicDNS configuration for the tailnet,
+// DNSTailnetInfo describes MagicDNS configuration for the tailnet,
 // combining [tailscale.com/ipn/ipnstate.TailnetStatus]
 // and [tailscale.com/ipn/ipnstate.PeerStatus].
-type TailnetInfo struct {
+type DNSTailnetInfo struct {
 	// MagicDNSEnabled is whether MagicDNS is enabled for the
 	// tailnet. The device may still not use it if
 	// --accept-dns=false.
@@ -50,30 +50,30 @@ type TailnetInfo struct {
 	SelfDNSName string `json:",omitempty"`
 }
 
-// StatusResponse is the full DNS status collected from the local
+// DNSStatusResult is the full DNS status collected from the local
 // Tailscale daemon. It is the output of:
 //
 //	$ tailscale dns status --json
-type StatusResponse struct {
+type DNSStatusResult struct {
 	// TailscaleDNS is whether the Tailscale DNS configuration is
 	// installed on this device (the --accept-dns setting).
 	TailscaleDNS bool
 
 	// CurrentTailnet describes MagicDNS configuration for the tailnet.
-	CurrentTailnet *TailnetInfo `json:",omitzero"` // nil if not connected
+	CurrentTailnet *DNSTailnetInfo `json:",omitzero"` // nil if not connected
 
 	// Resolvers are the DNS resolvers, in preference order. If
 	// empty, the system defaults are used.
-	Resolvers []ResolverInfo `json:",omitzero"`
+	Resolvers []DNSResolverInfo `json:",omitzero"`
 
 	// SplitDNSRoutes maps domain suffixes to dedicated resolvers.
 	// An empty resolver slice means the suffix is handled by
 	// Tailscale's built-in resolver (100.100.100.100).
-	SplitDNSRoutes map[string][]ResolverInfo `json:",omitzero"`
+	SplitDNSRoutes map[string][]DNSResolverInfo `json:",omitzero"`
 
 	// FallbackResolvers are like Resolvers but only used when
 	// split DNS needs explicit default resolvers.
-	FallbackResolvers []ResolverInfo `json:",omitzero"`
+	FallbackResolvers []DNSResolverInfo `json:",omitzero"`
 
 	SearchDomains []string `json:",omitzero"`
 
@@ -87,7 +87,7 @@ type StatusResponse struct {
 	CertDomains []string `json:",omitzero"`
 
 	// ExtraRecords contains extra DNS records in the MagicDNS config.
-	ExtraRecords []ExtraRecord `json:",omitzero"`
+	ExtraRecords []DNSExtraRecord `json:",omitzero"`
 
 	// ExitNodeFilteredSet are DNS suffixes this node won't resolve
 	// when acting as an exit node DNS proxy. Period-prefixed
@@ -95,6 +95,27 @@ type StatusResponse struct {
 	// lowercase, no trailing dots.
 	ExitNodeFilteredSet []string `json:",omitzero"`
 
-	SystemDNS      *SystemConfig `json:",omitzero"` // nil if unavailable
-	SystemDNSError string        `json:",omitempty"`
+	SystemDNS      *DNSSystemConfig `json:",omitzero"` // nil if unavailable
+	SystemDNSError string           `json:",omitempty"`
+}
+
+// DNSAnswer is a single DNS resource record from a query response.
+type DNSAnswer struct {
+	Name  string
+	TTL   uint32
+	Class string // e.g. "ClassINET"
+	Type  string // e.g. "TypeA", "TypeAAAA"
+	Body  string // human-readable record data
+}
+
+// DNSQueryResult is the result of a DNS query via the Tailscale
+// internal forwarder (100.100.100.100). It is the output of:
+//
+//	$ tailscale dns query --json NAME
+type DNSQueryResult struct {
+	Name         string
+	QueryType    string            // e.g. "A", "AAAA"
+	Resolvers    []DNSResolverInfo `json:",omitzero"`
+	ResponseCode string            // e.g. "RCodeSuccess", "RCodeNameError"
+	Answers      []DNSAnswer       `json:",omitzero"`
 }

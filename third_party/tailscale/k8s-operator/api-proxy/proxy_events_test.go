@@ -22,7 +22,6 @@ import (
 	"tailscale.com/net/netx"
 	"tailscale.com/sessionrecording"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/tsnet"
 )
 
@@ -74,7 +73,7 @@ func TestRecordRequestAsEvent(t *testing.T) {
 			LoginName: "user@example.com",
 		},
 		CapMap: tailcfg.PeerCapMap{
-			peercap.Kubernetes: []tailcfg.RawMessage{
+			tailcfg.PeerCapabilityKubernetes: []tailcfg.RawMessage{
 				tailcfg.RawMessage(`{"recorderAddrs":["127.0.0.1:1234"]}`),
 				tailcfg.RawMessage(`{"enforceRecorder": true, "enableEvents": true}`),
 			},
@@ -308,7 +307,7 @@ func TestRecordRequestAsEvent(t *testing.T) {
 				Node:        defaultWho.Node,
 				UserProfile: defaultWho.UserProfile,
 				CapMap: tailcfg.PeerCapMap{
-					peercap.Kubernetes: []tailcfg.RawMessage{
+					tailcfg.PeerCapabilityKubernetes: []tailcfg.RawMessage{
 						tailcfg.RawMessage(`{"recorderAddrs":["127.0.0.1:1234", "127.0.0.1:5678"]}`),
 						tailcfg.RawMessage(`{"enforceRecorder": true, "enableEvents": true}`),
 					},

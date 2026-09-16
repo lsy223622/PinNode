@@ -41,7 +41,7 @@ import (
 	"golang.org/x/sys/unix"
 	"tailscale.com/cmd/tailscaled/childproc"
 	"tailscale.com/hostinfo"
-	"tailscale.com/tailcfg/nodecap"
+	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 	"tailscale.com/version/distro"
 )
@@ -209,7 +209,7 @@ func (ss *sshSession) newIncubatorCommand(logf logger.Logf) (cmd *exec.Cmd, forw
 	}
 
 	nm := ss.conn.srv.lb.NetMapNoPeers()
-	forceV1Behavior := nm.HasCap(nodecap.SSHBehaviorV1) && !nm.HasCap(nodecap.SSHBehaviorV2)
+	forceV1Behavior := nm.HasCap(tailcfg.NodeAttrSSHBehaviorV1) && !nm.HasCap(tailcfg.NodeAttrSSHBehaviorV2)
 	if forceV1Behavior {
 		incubatorArgs = append(incubatorArgs, "--force-v1-behavior")
 	}
@@ -233,7 +233,7 @@ func (ss *sshSession) newIncubatorCommand(logf logger.Logf) (cmd *exec.Cmd, forw
 		incubatorArgs = append(incubatorArgs, "--cmd="+ss.RawCommand())
 	}
 
-	allowSendEnv := nm.HasCap(nodecap.SSHEnvironmentVariables)
+	allowSendEnv := nm.HasCap(tailcfg.NodeAttrSSHEnvironmentVariables)
 	if allowSendEnv {
 		env, err := filterEnv(ss.conn.acceptEnv, ss.Session.Environ())
 		if err != nil {

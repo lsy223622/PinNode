@@ -6,6 +6,7 @@ package ipnlocal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"maps"
 	"net/netip"
@@ -15,7 +16,6 @@ import (
 
 	"tailscale.com/net/routecheck/peernode"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tstest"
 	"tailscale.com/types/key"
 	"tailscale.com/types/netmap"
@@ -240,10 +240,10 @@ func TestNodeBackendReachability(t *testing.T) {
 				Name:     "self",
 			}
 			if tc.cap {
-				mak.Set(&self.CapMap, nodecap.ClientSideReachability, nil)
+				mak.Set(&self.CapMap, tailcfg.NodeAttrClientSideReachability, nil)
 			}
 			if tc.rchk {
-				mak.Set(&self.CapMap, nodecap.ClientSideReachabilityRouteCheck, nil)
+				mak.Set(&self.CapMap, tailcfg.NodeAttrClientSideReachabilityRouteCheck, nil)
 			}
 
 			peer := &tailcfg.Node{
@@ -570,6 +570,11 @@ func TestNodeBackendRouteManagerExtras(t *testing.T) {
 // lookups must serve from the node indexes and stay correct across
 // netmap deltas without any full Hosts map rebuild.
 func TestNodeBackendMagicDNSHosts(t *testing.T) {
+	t.Run("MagicDNS-enabled", func(t *testing.T) { testNodeBackendMagicDNSHosts(t, true) })
+	t.Run("MagicDNS-disabled", func(t *testing.T) { testNodeBackendMagicDNSHosts(t, false) })
+}
+
+func testNodeBackendMagicDNSHosts(t *testing.T, magicDNSEnabled bool) {
 	nb := newNodeBackend(t.Context(), tstest.WhileTestRunningLogger(t), eventbus.New())
 
 	self := &tailcfg.Node{
@@ -585,11 +590,12 @@ func TestNodeBackendMagicDNSHosts(t *testing.T) {
 			netip.MustParsePrefix("100.64.0.2/32"),
 			netip.MustParsePrefix("fd7a:115c:a1e0::2/128"),
 		},
-		CapMap: tailcfg.NodeCapMap{nodecap.DNSSubdomainResolve: nil},
+		CapMap: tailcfg.NodeCapMap{tailcfg.NodeAttrDNSSubdomainResolve: nil},
 	}
 	nb.SetNetMap(&netmap.NetworkMap{
 		SelfNode: self.View(),
 		Peers:    []tailcfg.NodeView{p1.View()},
+		DNS:      tailcfg.DNSConfig{Proxied: magicDNSEnabled},
 	})
 
 	wantHost := func(fqdn dnsname.FQDN, want ...netip.Addr) {
@@ -611,6 +617,14 @@ func TestNodeBackendMagicDNSHosts(t *testing.T) {
 	wantHost("p1.example.ts.net.", netip.MustParseAddr("100.64.0.2"))
 	wantHost("self.example.ts.net.", netip.MustParseAddr("100.64.0.1"))
 	wantHost("unknown.example.ts.net.")
+
+	// Short names are only resolved if MagicDNS is enabled.
+	// Otherwise, the resolver should not serve any short names.
+	var shortNameAddr []netip.Addr
+	if magicDNSEnabled {
+		shortNameAddr = []netip.Addr{netip.MustParseAddr("100.64.0.2")}
+	}
+	wantHost("p1.", shortNameAddr...)
 
 	if fqdn, ok := nb.magicDNSPTR(netip.MustParseAddr("100.64.0.2")); !ok || fqdn != "p1.example.ts.net." {
 		t.Errorf("magicDNSPTR(100.64.0.2) = %q, %v; want p1's name", fqdn, ok)
@@ -656,4 +670,99 @@ func TestNodeBackendMagicDNSHosts(t *testing.T) {
 	if fqdn, ok := nb.magicDNSPTR(netip.MustParseAddr("100.64.0.3")); !ok || fqdn != "p3-renamed.example.ts.net." {
 		t.Errorf("magicDNSPTR(100.64.0.3) after rename = %q, %v; want p3's new name", fqdn, ok)
 	}
+}
+
+// TestNodeBackendIndexReuseEviction exercises netmap delta orderings in
+// which one peer's address, name, or key index entry is claimed by a
+// second peer before the first peer's entries are evicted. The eviction
+// must keep the second peer's entries, or lookups by IP (WhoIs, and thus
+// PeerAPI and App Connector DNS) would fail until the next full netmap,
+// even though the peers map and the WireGuard config remain correct.
+func TestNodeBackendIndexReuseEviction(t *testing.T) {
+	addr := netip.MustParseAddr("100.64.0.1")
+	mkPeer := func(id tailcfg.NodeID, a netip.Addr) tailcfg.NodeView {
+		return (&tailcfg.Node{
+			ID:        id,
+			StableID:  tailcfg.StableNodeID(fmt.Sprintf("stable%d", id)),
+			Key:       makeNodeKeyFromID(id),
+			Name:      "runner.example.ts.net.",
+			HomeDERP:  1,
+			Addresses: []netip.Prefix{netip.PrefixFrom(a, a.BitLen())},
+		}).View()
+	}
+	newBackend := func(t *testing.T, initial ...tailcfg.NodeView) *nodeBackend {
+		nb := newNodeBackend(t.Context(), tstest.WhileTestRunningLogger(t), eventbus.New())
+		nb.SetNetMap(&netmap.NetworkMap{Peers: initial})
+		return nb
+	}
+	apply := func(t *testing.T, nb *nodeBackend, muts ...netmap.NodeMutation) {
+		t.Helper()
+		if _, handled := nb.UpdateNetmapDelta(muts); !handled {
+			t.Fatal("UpdateNetmapDelta not handled")
+		}
+	}
+	wantAddr := func(t *testing.T, nb *nodeBackend, a netip.Addr, want tailcfg.NodeID) {
+		t.Helper()
+		got, ok := nb.NodeByAddr(a)
+		if want == 0 {
+			if ok {
+				t.Errorf("NodeByAddr(%v) = %v; want no match", a, got)
+			}
+			return
+		}
+		if !ok || got != want {
+			t.Errorf("NodeByAddr(%v) = %v, %v; want %v", a, got, ok, want)
+		}
+	}
+
+	t.Run("remove-after-reuse", func(t *testing.T) {
+		// Peer 1 owns the address. Control reassigns it (and the
+		// MagicDNS name) to new peer 2 in one delta batch and removes
+		// peer 1 in a later batch, as happens with churning ephemeral
+		// peers. The removal of peer 1 must not evict peer 2's claims.
+		nb := newBackend(t, mkPeer(1, addr))
+		apply(t, nb, netmap.NodeMutationUpsert{Node: mkPeer(2, addr)})
+		apply(t, nb, netmap.MakeNodeMutationRemove(1))
+		wantAddr(t, nb, addr, 2)
+		if nid, ok := nb.NodeByName("runner.example.ts.net"); !ok || nid != 2 {
+			t.Errorf("NodeByName = %v, %v; want 2", nid, ok)
+		}
+		if nid, ok := nb.NodeByKey(makeNodeKeyFromID(2)); !ok || nid != 2 {
+			t.Errorf("NodeByKey(peer 2) = %v, %v; want 2", nid, ok)
+		}
+		if nid, ok := nb.NodeByKey(makeNodeKeyFromID(1)); ok {
+			t.Errorf("NodeByKey(peer 1) = %v; want no match after removal", nid)
+		}
+		// Removing the current owner still evicts.
+		apply(t, nb, netmap.MakeNodeMutationRemove(2))
+		wantAddr(t, nb, addr, 0)
+	})
+
+	t.Run("single-response-sort-order", func(t *testing.T) {
+		// Within one MapResponse, MutationsFromMapResponse sorts by
+		// NodeID, which can order the upsert of the address's new
+		// owner before the removal of its old owner.
+		nb := newBackend(t, mkPeer(10, addr))
+		muts, ok := netmap.MutationsFromMapResponse(&tailcfg.MapResponse{
+			PeersRemoved: []tailcfg.NodeID{10},
+			PeersChanged: []*tailcfg.Node{mkPeer(2, addr).AsStruct()},
+		}, time.Unix(123, 0))
+		if !ok {
+			t.Fatal("MutationsFromMapResponse failed")
+		}
+		apply(t, nb, muts...)
+		wantAddr(t, nb, addr, 2)
+	})
+
+	t.Run("upsert-eviction", func(t *testing.T) {
+		// Peer 2 claims peer 1's address. A later upsert of peer 1
+		// with a new address evicts entries derived from peer 1's old
+		// value, which must not include peer 2's claim.
+		nb := newBackend(t, mkPeer(1, addr))
+		apply(t, nb, netmap.NodeMutationUpsert{Node: mkPeer(2, addr)})
+		addr2 := netip.MustParseAddr("100.64.0.9")
+		apply(t, nb, netmap.NodeMutationUpsert{Node: mkPeer(1, addr2)})
+		wantAddr(t, nb, addr, 2)
+		wantAddr(t, nb, addr2, 1)
+	})
 }

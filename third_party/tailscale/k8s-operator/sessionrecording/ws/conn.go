@@ -3,7 +3,7 @@
 
 //go:build !plan9
 
-// Package ws has functionality to parse 'kubectl exec/attach' sessions streamed using
+// package ws has functionality to parse 'kubectl exec/attach' sessions streamed using
 // WebSocket protocol.
 package ws
 
