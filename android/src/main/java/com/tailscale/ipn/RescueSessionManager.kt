@@ -390,6 +390,8 @@ class RescueSessionManager(private val app: App) {
   internal class RescueVpnPermissionException : IOException()
 
   private val mutex = Mutex()
+  private val lifecycleLock = Any()
+  private var lifecycleGeneration = 0L
   private val cleanupMutex = Mutex()
   private val json = Json { ignoreUnknownKeys = true }
   private val configPrefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -458,6 +460,7 @@ class RescueSessionManager(private val app: App) {
         }
 
         val previousNodeID = Notifier.netmap.value?.SelfNode?.StableID
+        val generation = synchronized(lifecycleLock) { lifecycleGeneration }
         var pending: ActiveSession? = null
         val startRequest =
             StartRequest(
@@ -471,6 +474,7 @@ class RescueSessionManager(private val app: App) {
         val pendingStart = pendingSessionStart(startRequest, serverUrl)
         try {
           validateApiCompatibility(getJson<ApiMeta>("v1/meta", null, serverUrl))
+          withCurrentLifecycle(generation) {}
           val response =
               postJson<StartResponse, StartRequest>(
                   "v1/sessions",
@@ -483,7 +487,7 @@ class RescueSessionManager(private val app: App) {
           if (response.configRevision < 1 || response.syncIntervalSeconds < 1) {
             throw PinNodeApiConfigurationException("服务器返回了无效的会话同步配置。")
           }
-          pending =
+          val provisioning =
               ActiveSession(
                   id = response.sessionId,
                   token = response.sessionToken,
@@ -497,26 +501,36 @@ class RescueSessionManager(private val app: App) {
                   configRevision = response.configRevision,
                   syncIntervalSeconds = response.syncIntervalSeconds,
               )
-          persistSession(pending)
-          clearPendingSessionStart()
-          app.setRescueRoutes(response.wifiRoutes)
-          app.setRescueMode(response.config.networkMode == "cellular")
+          pending = provisioning
+          withCurrentLifecycle(generation) {
+            persistSession(provisioning)
+            clearPendingSessionStart()
+            app.setRescueRoutes(response.wifiRoutes)
+            app.setRescueMode(response.config.networkMode == "cellular")
+          }
           loginWithAuthKey(
               response.authKey,
               response.config,
               response.routes,
               response.provisioningHostname,
+              generation,
           )
           val nodeId = waitForNodeID(previousNodeID)
-          val attached = attachDeviceWithRetry(pending, nodeId)
-          if (attached.sessionId != pending.id || attached.nodeId != nodeId || !attached.enabled) {
+          withCurrentLifecycle(generation) {}
+          val attached = attachDeviceWithRetry(provisioning, nodeId)
+          withCurrentLifecycle(generation) {}
+          if (attached.sessionId != provisioning.id ||
+              attached.nodeId != nodeId ||
+              !attached.enabled) {
             throw PinNodeApiConfigurationException("服务器返回了不匹配的会话绑定响应。")
           }
-          if (attached.configRevision < pending.configRevision || attached.configRevision < 1) {
+          if (attached.configRevision < provisioning.configRevision ||
+              attached.configRevision < 1) {
             throw PinNodeApiConfigurationException("服务器返回了无效的绑定配置 revision。")
           }
           val attachedSession =
-              pending.copy(
+              provisioning.copy(
+                  attached = true,
                   route = attached.gatewayRoute,
                   routes = attached.routes,
                   wifiRoutes = attached.wifiRoutes,
@@ -524,14 +538,11 @@ class RescueSessionManager(private val app: App) {
                   expiresAt = attached.expiresAt,
                   configRevision = attached.configRevision,
               )
-          applyConfig(Client(app.applicationScope), attachedSession.config, attachedSession.routes)
-          pending = attachedSession.copy(attached = true)
-          activeSession = pending
-          persistSession(pending)
-          startSessionStateMonitor(pending)
-          scheduleTimedExit(pending)
-          startClientTelemetry(pending)
-          startSync(pending)
+          applySessionConfig(provisioning, attachedSession, generation)
+          withCurrentLifecycle(generation) {
+            startClientTelemetry(attachedSession)
+            startSync(attachedSession)
+          }
           Result.success(route)
         } catch (error: Throwable) {
           if ((error is PinNodeApiException && !error.retryable) ||
@@ -539,17 +550,25 @@ class RescueSessionManager(private val app: App) {
             clearPendingSessionStart()
           }
           TSLog.e(TAG, "启动临时会话失败: ${error::class.simpleName}")
+          val cleanupPersisted = pending?.let { persistPendingCleanup(it) } ?: true
           runCatching { clearManagedNode() }
               .onFailure { cleanupError ->
                 TSLog.e(TAG, "清理临时 Tailscale 节点失败: ${cleanupError::class.simpleName}")
               }
           app.setRescueRoutes(null)
           app.setRescueMode(false)
+          app.stopVPN()
+          activeSession = null
           stopSessionStateMonitor()
           _sessionState.value = RescueSessionState()
-          clearPersistedSession()
+          if (cleanupPersisted) clearPersistedSession()
           pending?.let { session ->
-            runCatching { stopRemote(session) }.onFailure { persistPendingCleanup(session) }
+            runCatching { stopRemote(session) }
+                .onSuccess {
+                  clearPendingCleanup(session.id)
+                  clearPersistedSession()
+                }
+                .onFailure { persistPendingCleanup(session) }
           }
           Result.failure(error)
         }
@@ -573,32 +592,36 @@ class RescueSessionManager(private val app: App) {
     requestLifecycleStop()
   }
 
-  private fun requestLifecycleStop() {
-    val session = activeSession ?: loadPersistedActiveSession()
-    val persisted = session == null || persistPendingCleanup(session)
-    if (!persisted) {
-      TSLog.e(TAG, "生命周期退出意图持久化失败，保留 active session 记录")
-    } else if (session != null) {
-      activeSession = null
-      clearPersistedSession()
-    }
-    session?.let { clientLogBuffer.discardSession(it.id) }
-    stopClientTelemetry()
-    timedExitJob?.cancel()
-    timedExitJob = null
-    syncJob?.cancel()
-    syncJob = null
-    stopSessionStateMonitor()
-    runCatching {
-          app.setRescueRoutes(null)
-          app.setRescueMode(false)
+  private fun requestLifecycleStop() =
+      synchronized(lifecycleLock) {
+        lifecycleGeneration++
+        val session = activeSession ?: loadPersistedActiveSession()
+        val persisted = session == null || persistPendingCleanup(session)
+        if (!persisted) {
+          TSLog.e(TAG, "生命周期退出意图持久化失败，保留 active session 记录")
+        } else if (session != null) {
+          activeSession = null
+          clearPersistedSession()
         }
-        .onFailure { TSLog.e(TAG, "生命周期退出时停用本地救援网络失败: ${it::class.simpleName}") }
-    _sessionState.value = RescueSessionState()
-    if (persisted) {
-      app.applicationScope.launch { retryPendingCleanup() }
-    }
-  }
+        session?.let { clientLogBuffer.discardSession(it.id) }
+        stopClientTelemetry()
+        timedExitJob?.cancel()
+        timedExitJob = null
+        // A LocalAPI request runs independently of its waiting coroutine. Let an
+        // in-flight write finish under mutex so it can clean up before a new start.
+        syncJob = null
+        pendingVpnPermission?.complete(false)
+        stopSessionStateMonitor()
+        runCatching {
+              app.setRescueRoutes(null)
+              app.setRescueMode(false)
+            }
+            .onFailure { TSLog.e(TAG, "生命周期退出时停用本地救援网络失败: ${it::class.simpleName}") }
+        _sessionState.value = RescueSessionState()
+        if (persisted) {
+          app.applicationScope.launch { retryPendingCleanup() }
+        }
+      }
 
   suspend fun exitForAppClose() {
     mutex.withLock {
@@ -709,7 +732,8 @@ class RescueSessionManager(private val app: App) {
               clearPersistedSession()
               return
             }
-    if (restored.config.exitPolicy.onAppClose) {
+    if (restored.config.exitPolicy.onAppClose ||
+        loadPendingCleanups().any { it.id == restored.id }) {
       if (!persistPendingCleanup(restored)) {
         TSLog.e(TAG, "恢复时持久化应用关闭清理意图失败，保留 active session 记录")
         return
@@ -752,7 +776,9 @@ class RescueSessionManager(private val app: App) {
 
   private fun persistSession(session: ActiveSession) {
     val encoded = json.encodeToString(ActiveSession.serializer(), session)
-    sessionPrefs.edit(commit = true) { putString(KEY_ACTIVE_SESSION, encoded) }
+    if (!sessionPrefs.edit().putString(KEY_ACTIVE_SESSION, encoded).commit()) {
+      throw IOException("无法持久化会话状态")
+    }
   }
 
   private fun clearPersistedSession() {
@@ -1040,10 +1066,12 @@ class RescueSessionManager(private val app: App) {
     syncJob?.cancel()
     syncJob = null
     var intervalSeconds = session.syncIntervalSeconds.coerceIn(15, 300)
+    val generation = synchronized(lifecycleLock) { lifecycleGeneration }
     syncJob =
         app.applicationScope.launch {
           var firstSync = true
-          while (activeSession?.id == session.id) {
+          while (activeSession?.id == session.id &&
+              synchronized(lifecycleLock) { generation == lifecycleGeneration }) {
             if (!firstSync) {
               withTimeoutOrNull(TimeUnit.SECONDS.toMillis(intervalSeconds)) {
                 clientStateWake.receive()
@@ -1072,14 +1100,22 @@ class RescueSessionManager(private val app: App) {
               response.desiredConfig?.let { desired ->
                 mutex.withLock {
                   val latest = activeSession?.takeIf { it.id == current.id } ?: return@withLock
-                  applyDesiredConfig(latest, desired)
+                  applyDesiredConfig(latest, desired, generation)
                 }
               }
               intervalSeconds = response.nextSyncAfterSeconds.coerceIn(15, 300)
               lastSyncError = ""
             } catch (error: Throwable) {
               if (error is PinNodeApiException && error.status in setOf(404, 409, 410)) {
-                app.applicationScope.launch { stop() }
+                app.applicationScope.launch {
+                  mutex.withLock {
+                    if (synchronized(lifecycleLock) {
+                      generation == lifecycleGeneration && activeSession?.id == session.id
+                    }) {
+                      stopLocked()
+                    }
+                  }
+                }
                 return@launch
               }
               lastSyncError = error::class.simpleName.orEmpty().take(256)
@@ -1092,23 +1128,13 @@ class RescueSessionManager(private val app: App) {
   private suspend fun applyDesiredConfig(
       session: ActiveSession,
       desired: SessionConfigSnapshot,
+      generation: Long,
   ) {
     if (desired.revision <= session.configRevision) return
     if (desired.revision < 1) {
       throw PinNodeApiConfigurationException("服务器返回了无效的配置 revision。")
     }
-    if (desired.config.vpnEnabled && !session.config.vpnEnabled) {
-      ensureVpnPermission()
-      app.startForegroundForLogin()
-    }
-    app.setRescueRoutes(desired.wifiRoutes)
-    app.setRescueMode(desired.config.networkMode == "cellular")
-    applyConfig(Client(app.applicationScope), desired.config, desired.routes)
-    if (desired.config.vpnEnabled && !session.config.vpnEnabled) {
-      app.startVPN()
-    } else if (!desired.config.vpnEnabled && session.config.vpnEnabled) {
-      app.stopVPN()
-    }
+    withCurrentLifecycle(generation) { check(activeSession?.id == session.id) { "临时会话已经停止" } }
     val updated =
         session.copy(
             route = desired.gatewayRoute,
@@ -1118,10 +1144,48 @@ class RescueSessionManager(private val app: App) {
             expiresAt = desired.expiresAt,
             configRevision = desired.revision,
         )
-    activeSession = updated
-    persistSession(updated)
-    startSessionStateMonitor(updated)
-    scheduleTimedExit(updated)
+    applySessionConfig(session, updated, generation)
+  }
+
+  private fun <T> withCurrentLifecycle(generation: Long, action: () -> T): T =
+      synchronized(lifecycleLock) {
+        if (generation != lifecycleGeneration) throw IOException("临时会话已请求停止")
+        action()
+      }
+
+  private suspend fun applySessionConfig(
+      previous: ActiveSession,
+      updated: ActiveSession,
+      generation: Long,
+  ) {
+    if (updated.config.vpnEnabled && !previous.config.vpnEnabled) {
+      ensureVpnPermission()
+      withCurrentLifecycle(generation) { app.startForegroundForLogin() }
+    }
+    try {
+      withCurrentLifecycle(generation) {}
+      applyConfig(Client(app.applicationScope), updated.config, updated.routes)
+      withCurrentLifecycle(generation) {
+        app.setRescueRoutes(updated.wifiRoutes)
+        app.setRescueMode(updated.config.networkMode == "cellular")
+        if (updated.config.vpnEnabled && !previous.config.vpnEnabled) {
+          app.startVPN()
+        } else if (!updated.config.vpnEnabled && previous.config.vpnEnabled) {
+          app.stopVPN()
+        }
+        persistSession(updated)
+        activeSession = updated
+        startSessionStateMonitor(updated)
+        scheduleTimedExit(updated)
+      }
+    } catch (error: Throwable) {
+      if (synchronized(lifecycleLock) { generation != lifecycleGeneration }) {
+        runCatching { clearManagedNode() }
+            .onFailure { TSLog.e(TAG, "退出后清理迟到配置失败: ${it::class.simpleName}") }
+        app.stopVPN()
+      }
+      throw error
+    }
   }
 
   private fun monitorNetworkExitPolicy() {
@@ -1152,10 +1216,11 @@ class RescueSessionManager(private val app: App) {
       config: SessionConfig,
       routes: List<String>,
       hostname: String,
+      generation: Long,
   ) {
     if (config.vpnEnabled) {
       ensureVpnPermission()
-      app.startForegroundForLogin()
+      withCurrentLifecycle(generation) { app.startForegroundForLogin() }
     }
     val client = Client(app.applicationScope)
     val prefs =
@@ -1163,16 +1228,17 @@ class RescueSessionManager(private val app: App) {
               client.editPrefs(Ipn.MaskedPrefs().apply { LoggedOut = false }, callback)
             }
             .getOrThrow()
+    withCurrentLifecycle(generation) {}
     applyConfigToPrefs(prefs, config, routes, hostname)
     await { callback ->
           client.start(Ipn.Options(UpdatePrefs = prefs, AuthKey = authKey), callback)
         }
         .getOrThrow()
+    withCurrentLifecycle(generation) {}
     await { callback -> client.startLoginInteractive(callback) }.getOrThrow()
+    withCurrentLifecycle(generation) {}
     applyConfig(client, config, routes, hostname)
-    if (config.vpnEnabled) {
-      app.startVPN()
-    }
+    withCurrentLifecycle(generation) { if (config.vpnEnabled) app.startVPN() }
   }
 
   private suspend fun ensureVpnPermission() {

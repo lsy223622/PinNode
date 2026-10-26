@@ -145,6 +145,13 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleAdminLogout(w, r)
 	case r.URL.Path == "/v1/tailscale-credentials":
 		s.handleTailscaleCredentials(w, r)
+	case strings.HasPrefix(r.URL.Path, "/v1/tailscale-credentials/"):
+		id := strings.TrimPrefix(r.URL.Path, "/v1/tailscale-credentials/")
+		if id == "" || strings.Contains(id, "/") {
+			writeError(w, http.StatusNotFound, "route_not_found", "路径不存在")
+			return
+		}
+		s.handleTailscaleCredential(w, r, id)
 	case r.URL.Path == "/v1/pairing-codes":
 		s.handlePairingCode(w, r)
 	case r.URL.Path == "/v1/admin/console":

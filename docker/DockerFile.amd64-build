@@ -24,7 +24,7 @@ RUN chmod 755 /tmp/docker-build-apt-get.sh && \
 # to run "go run tailscale.com/cmd/printdep" to figure out which Tailscale Go
 # version we need later, but otherwise this toolchain isn't used:
 RUN \
-    curl -L https://go.dev/dl/go1.26.6.linux-amd64.tar.gz | tar -C /usr/local -zxv && \
+    curl -fL https://go.dev/dl/go1.27.3.linux-amd64.tar.gz | tar -C /usr/local -zxv && \
     ln -s /usr/local/go/bin/go /usr/bin
 
 RUN git config --global --add safe.directory $HOME/pinnode-android

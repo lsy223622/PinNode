@@ -122,16 +122,23 @@ pinnode-v<version>-<commit>-LICENSES.md
 
 正式打 tag 前至少保留以下证据；构建成功本身不等于链路验收完成：
 
-- 服务端：`go test ./...`、`go vet ./...`，再用 Debug 构建在本地 `6634` 启动；若通过
+- 服务端：使用 `server/go.mod` 要求的 Go 版本运行 `go test -race ./...`、`go vet ./...`、
+  `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`，再用 Debug 构建在本地 `6634` 启动；若通过
   反代验收，可信代理配置只包含实际反代来源的精确 CIDR，并分别检查 origin 和 HTTPS
   域名的 `/healthz`、管理登录、静态资源缓存头和 SSE。
 - 管理页：创建、自然过期和兑换 PIN；Console 的 pending/active 转移、六种健康状态、
   多于历史查询上限的活动会话、节点离线/控制面故障降级；Logs 的来源/级别/组件/会话
   筛选、暂停、继续、自动滚动、断线恢复、`reset`、无重复和 session 失效收回。
-- Android：在专用 AVD 上安装当前 Debug APK，完成会话建立、状态同步、日志上传、短暂
+- Android：先运行 `testDebugUnitTest`、`testReleaseUnitTest`，并用锁定的 Tailscale Go 运行
+  `./tool/go test -race tailscale.com/wgengine/netstack`。核心漏洞扫描按 CI 中的 Android
+  `arm64` 目标执行；源码扫描通过不能替代使用更新工具链重新生成 AAR 和 APK。
+  在专用 AVD 上安装当前 Debug APK，完成会话建立、状态同步、日志上传、短暂
   网络故障后的有限补发、正常停止、超时清理和清理失败重试；记录固定 ADB serial，不能
   把 instrumentation APK 构建成功当作 connected test 成功。真机重启、OEM 特定强杀和
   不同路由器/调制解调器拓扑若未执行，保留为单独证据缺口。
+- 升级与恢复：按 `server/README.md` 创建升级前一致性快照，保留对应实例密钥和旧二进制；
+  在隔离目录恢复并核对管理员登录、既有会话与清理状态，验证同 ID 凭据轮换后旧会话仍可清理。
+  需要回滚时恢复整组旧版本快照，不把迁移后的数据库直接交给旧程序。
 - 发布包：清空 AVD 应用数据后安装 Release APK，核对 application ID、版本、签名证书
   指纹、服务端变体和内嵌许可证；运行 `apksigner verify --verbose --print-certs`，再
   用同一 `<version>-<commit>` 核对 APK、服务端压缩包和 SHA-256 文件。签名密码只从当前

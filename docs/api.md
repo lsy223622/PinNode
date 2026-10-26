@@ -88,6 +88,7 @@ v1 冻结后，兼容变更只能增加可选响应字段、能力标识或新�
 | `POST` | `/v1/auth/logout` | 管理页 | Admin write | 管理员退出 |
 | `GET` | `/v1/tailscale-credentials` | 管理页 | Admin session | 列出凭据元数据 |
 | `POST` | `/v1/tailscale-credentials` | 管理页 | Admin write | 验证并加密保存凭据 |
+| `PUT` | `/v1/tailscale-credentials/{credentialId}` | 管理页 | Admin write | 验证并轮换凭据，保留已有 PIN 和会话引用 |
 | `POST` | `/v1/pairing-codes` | 管理页 | Admin write | 创建一次性六位 PIN |
 | `GET` | `/v1/admin/console` | 管理页 | Admin session | 查询待兑换 PIN、活动会话和控制面快照 |
 | `GET` | `/v1/admin/console/stream` | 管理页 | Admin session | 订阅 Console 状态事件 SSE |
@@ -236,6 +237,13 @@ pairing code 请求中的 `config` 是对安全默认值的部分覆盖；服务
 ```
 
 OAuth 交换会显式请求 `auth_keys devices:core devices:routes` scope 和当前构建的受管设备 tag；服务端检查 token 响应的 scope，并用列出 auth keys 做无副作用的凭据/tailnet 探测。成功为 `201`，响应是单个凭据元数据对象。
+
+`PUT /v1/tailscale-credentials/{credentialId}` 使用相同的完整请求体轮换已有凭据。
+需要管理员 Cookie、CSRF、同源验证和 HTTPS（仅服务端 loopback 可用 HTTP）。新凭据必须
+属于同一 Tailnet，并拥有现有节点所需权限。在线验证失败时不替换旧 secret；成功为 `200`，
+保留 ID、创建时间、既有 PIN 和 session 引用，替换密文并更新 OAuth 缓存。响应只包含元数据。
+不存在的 ID 返回 `404 credential_not_found`；名称冲突返回 `409 credential_name_conflict`。
+基础验证不证明所有既有设备的 routes/core 权限，轮换后仍需核对受管节点。
 
 ### 6.4 创建 pairing code
 

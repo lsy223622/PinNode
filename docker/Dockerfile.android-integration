@@ -55,11 +55,11 @@ RUN mkdir -p /tmp/kotlin && \
 
 RUN yes | sdkmanager --licenses >/dev/null && \
     sdkmanager \
-        "build-tools;34.0.0" \
+        "build-tools;36.0.0" \
         "emulator" \
-        "ndk;23.1.7779620" \
+        "ndk;30.0.16248370" \
         "platform-tools" \
-        "platforms;android-34" \
+        "platforms;android-36" \
         "system-images;android-33;google_apis;x86_64"
 
 COPY scripts/run-android-integration-test-docker.sh /usr/local/bin/run-android-integration-test

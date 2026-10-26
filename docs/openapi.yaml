@@ -204,6 +204,39 @@ paths:
           $ref: "#/components/responses/Error"
         "5XX":
           $ref: "#/components/responses/Error"
+  /v1/tailscale-credentials/{credentialId}:
+    put:
+      summary: Validate and rotate a credential while keeping existing session references
+      description: The replacement must manage the same tailnet and existing tagged devices. Validation failure preserves the stored secret. OAuth token cache is replaced on success.
+      tags: [Credentials]
+      operationId: rotateTailscaleCredential
+      security:
+        - adminCookie: []
+          csrfToken: []
+      parameters:
+        - name: credentialId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ApiTokenCredentialRequest"
+                - $ref: "#/components/schemas/OAuthCredentialRequest"
+      responses:
+        "200":
+          description: Secret replaced; ID, creation time and existing references preserved. Secrets are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TailscaleCredential"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        "5XX":
+          $ref: "#/components/responses/Error"
   /v1/pairing-codes:
     post:
       summary: Create a single-use pairing code

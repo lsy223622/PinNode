@@ -19,6 +19,10 @@
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
     body {
       min-width: 320px; min-height: 100vh; margin: 0; background: var(--page); color: var(--text);
       font-size: 14px; line-height: 1.45;
@@ -594,10 +598,14 @@
         <section class="card" id="authentication">
           <div class="card-header card-header-actions">
             <div class="card-header-copy"><h2>Tailscale 管理凭据</h2><p class="section-hint">选择已加密保存的 OAuth client 或 API access token；生成的授权码会绑定到所选凭据。</p></div>
-            <button id="credential-form-toggle" class="secondary-button" type="button" aria-expanded="false" aria-controls="credential-add-form">添加凭据</button>
+            <div class="credential-actions">
+              <button id="rotate-credential" class="secondary-button" type="button" disabled>轮换所选凭据</button>
+              <button id="credential-form-toggle" class="secondary-button" type="button" aria-expanded="false" aria-controls="credential-add-form">添加凭据</button>
+            </div>
           </div>
           <label class="field-row" for="credential-select"><span class="field-label">本次使用</span><span class="field-help">凭据内容不会返回浏览器。若列表为空，请先添加。</span><select id="credential-select" required><option value="">尚未添加凭据</option></select><span id="credential-message" class="credential-message" aria-live="polite"></span></label>
           <div id="credential-add-form" class="field-row" hidden>
+            <span id="credential-rotation-help" class="field-help" hidden>新凭据必须管理同一 Tailnet，并保有现有节点的权限。验证成功后将替换所选凭据的 secret，已有 PIN 和会话继续使用同一凭据 ID。请确认已有会话可管理后，再在 Tailscale 撤销旧凭据。</span>
             <span class="field-help">OAuth client 适合长期运行，需要 <code>auth_keys</code>、<code>devices:core</code>、<code>devices:routes</code> 权限和 <code>{{MANAGED_DEVICE_TAG}}</code>；普通 API token 最长有效 90 天。<a class="external-link" href="https://console.tailscale.com/admin/settings/trust-credentials/add" target="_blank" rel="noopener noreferrer">前往 Tailscale 创建 OAuth client ↗</a></span>
             <label class="auth-field credential-token-field" for="credential-type"><span class="field-label">凭据类型</span><select id="credential-type"><option value="oauth_client" selected>OAuth client（推荐）</option><option value="api_token">API access token</option></select></label>
             <div class="credential-actions">
@@ -835,7 +843,7 @@
       }
       if (page === "config" && hash) {
         const target = $(hash.replace(/^#/, ""));
-        if (target) setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+        if (target) setTimeout(() => target.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 0);
       } else {
         window.scrollTo(0, 0);
       }
@@ -1652,6 +1660,9 @@
       }
     });
 
+    let savedCredentials = [];
+    let rotatingCredentialID = "";
+
     async function loadCredentials(preferredID = "") {
       const response = await fetch("/v1/tailscale-credentials", { headers: { "Accept": "application/json" } });
       if (response.status === 401) {
@@ -1660,10 +1671,12 @@
       }
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error?.message || "读取凭据列表失败");
+      savedCredentials = payload.credentials;
       const select = $("credential-select");
       const previous = preferredID || select.value;
       select.replaceChildren();
       if (!payload.credentials.length) {
+        $("rotate-credential").disabled = true;
         const option = document.createElement("option");
         option.value = "";
         option.textContent = "尚未添加凭据";
@@ -1678,6 +1691,7 @@
         select.append(option);
       }
       if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+      $("rotate-credential").disabled = !select.value;
       $("credential-message").textContent = "已保存 " + payload.credentials.length + " 个加密凭据。";
       $("credential-message").dataset.state = "";
     }
@@ -1691,12 +1705,36 @@
     function setCredentialFormExpanded(expanded) {
       $("credential-add-form").hidden = !expanded;
       $("credential-form-toggle").setAttribute("aria-expanded", String(expanded));
-      $("credential-form-toggle").textContent = expanded ? "收起添加凭据" : "添加凭据";
+      $("credential-form-toggle").textContent = expanded ? "收起凭据表单" : "添加凭据";
+      if (!expanded) {
+        rotatingCredentialID = "";
+        $("credential-rotation-help").hidden = true;
+        $("add-credential").textContent = "验证并保存";
+        $("credential-token").value = "";
+        $("credential-client-id").value = "";
+        $("credential-client-secret").value = "";
+      }
     }
 
     $("credential-type").addEventListener("change", updateCredentialFields);
     $("credential-form-toggle").addEventListener("click", () => {
       setCredentialFormExpanded($("credential-form-toggle").getAttribute("aria-expanded") !== "true");
+    });
+    $("credential-select").addEventListener("change", () => {
+      $("rotate-credential").disabled = !value("credential-select");
+      setCredentialFormExpanded(false);
+    });
+    $("rotate-credential").addEventListener("click", () => {
+      const credential = savedCredentials.find((item) => item.id === value("credential-select"));
+      if (!credential) return;
+      setCredentialFormExpanded(false);
+      rotatingCredentialID = credential.id;
+      $("credential-name").value = credential.name;
+      $("credential-type").value = credential.type;
+      $("credential-rotation-help").hidden = false;
+      $("add-credential").textContent = "验证并轮换";
+      updateCredentialFields();
+      setCredentialFormExpanded(true);
     });
     updateCredentialFields();
 
@@ -1716,8 +1754,8 @@
       $("credential-message").dataset.state = "";
       $("credential-message").textContent = "正在向 Tailscale 验证并加密保存…";
       try {
-        const response = await fetch("/v1/tailscale-credentials", {
-          method: "POST",
+        const response = await fetch("/v1/tailscale-credentials" + (rotatingCredentialID ? "/" + encodeURIComponent(rotatingCredentialID) : ""), {
+          method: rotatingCredentialID ? "PUT" : "POST",
           headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
           body: JSON.stringify({ name, type, token, clientId, clientSecret })
         });
@@ -1758,7 +1796,7 @@
       result.hidden = false;
       result.dataset.state = state;
       result.textContent = text;
-      result.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      result.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
     }
 
     const templates = {

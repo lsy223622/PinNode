@@ -535,6 +535,22 @@ func (s *Store) PutTailscaleCredential(credential TailscaleCredential) error {
 	return nil
 }
 
+func (s *Store) UpdateTailscaleCredential(credential TailscaleCredential) error {
+	result, err := s.db.Exec(`UPDATE tailscale_credentials SET name = ?, kind = ?, token_cipher = ?, updated_at = ? WHERE id = ?`,
+		credential.Name, credential.Kind, credential.Ciphertext, toMillis(credential.UpdatedAt), credential.ID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("凭据不存在")
+	}
+	return nil
+}
+
 func (s *Store) ListTailscaleCredentials() ([]TailscaleCredential, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, token_cipher, created_at, updated_at, last_used_at

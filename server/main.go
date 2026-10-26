@@ -13,6 +13,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		if err := runMaintenance(os.Args[1:], os.Stdin, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	config, err := LoadConfig()
 	if err != nil {
 		log.Fatal(err)

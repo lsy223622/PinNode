@@ -842,11 +842,11 @@ Client][].  See also the dependencies in the [Tailscale CLI][].
  - [github.com/google/go-tpm](https://pkg.go.dev/github.com/google/go-tpm) ([Apache-2.0](https://github.com/google/go-tpm/blob/v0.9.4/LICENSE))
  - [github.com/hdevalence/ed25519consensus](https://pkg.go.dev/github.com/hdevalence/ed25519consensus) ([BSD-3-Clause](https://github.com/hdevalence/ed25519consensus/blob/v0.2.0/LICENSE))
  - [github.com/huin/goupnp](https://pkg.go.dev/github.com/huin/goupnp) ([BSD-2-Clause](https://github.com/huin/goupnp/blob/v1.3.0/LICENSE))
- - [github.com/insomniacslk/dhcp](https://pkg.go.dev/github.com/insomniacslk/dhcp) ([BSD-3-Clause](https://github.com/insomniacslk/dhcp/blob/15c9b8791914/LICENSE))
+ - [github.com/insomniacslk/dhcp](https://pkg.go.dev/github.com/insomniacslk/dhcp) ([BSD-3-Clause](https://github.com/insomniacslk/dhcp/blob/c76316d4aa82/LICENSE))
  - [github.com/jellydator/ttlcache/v3](https://pkg.go.dev/github.com/jellydator/ttlcache/v3) ([MIT](https://github.com/jellydator/ttlcache/blob/v3.1.0/LICENSE))
- - [github.com/klauspost/compress](https://pkg.go.dev/github.com/klauspost/compress) ([Apache-2.0](https://github.com/klauspost/compress/blob/v1.18.5/LICENSE))
- - [github.com/klauspost/compress/internal/snapref](https://pkg.go.dev/github.com/klauspost/compress/internal/snapref) ([BSD-3-Clause](https://github.com/klauspost/compress/blob/v1.18.5/internal/snapref/LICENSE))
- - [github.com/klauspost/compress/zstd/internal/xxhash](https://pkg.go.dev/github.com/klauspost/compress/zstd/internal/xxhash) ([MIT](https://github.com/klauspost/compress/blob/v1.18.5/zstd/internal/xxhash/LICENSE.txt))
+ - [github.com/klauspost/compress](https://pkg.go.dev/github.com/klauspost/compress) ([Apache-2.0](https://github.com/klauspost/compress/blob/v1.19.1/LICENSE))
+ - [github.com/klauspost/compress/internal/snapref](https://pkg.go.dev/github.com/klauspost/compress/internal/snapref) ([BSD-3-Clause](https://github.com/klauspost/compress/blob/v1.19.1/internal/snapref/LICENSE))
+ - [github.com/klauspost/compress/zstd/internal/xxhash](https://pkg.go.dev/github.com/klauspost/compress/zstd/internal/xxhash) ([MIT](https://github.com/klauspost/compress/blob/v1.19.1/zstd/internal/xxhash/LICENSE.txt))
  - [github.com/kortschak/wol](https://pkg.go.dev/github.com/kortschak/wol) ([BSD-3-Clause](https://github.com/kortschak/wol/blob/da482cc4850a/LICENSE))
  - [github.com/mdlayher/netlink](https://pkg.go.dev/github.com/mdlayher/netlink) ([MIT](https://github.com/mdlayher/netlink/blob/fbb4dce95f42/LICENSE.md))
  - [github.com/mdlayher/socket](https://pkg.go.dev/github.com/mdlayher/socket) ([MIT](https://github.com/mdlayher/socket/blob/v0.5.0/LICENSE.md))
@@ -860,17 +860,17 @@ Client][].  See also the dependencies in the [Tailscale CLI][].
  - [github.com/x448/float16](https://pkg.go.dev/github.com/x448/float16) ([MIT](https://github.com/x448/float16/blob/v0.8.4/LICENSE))
  - [go4.org/mem](https://pkg.go.dev/go4.org/mem) ([Apache-2.0](https://github.com/go4org/mem/blob/ae6ca9944745/LICENSE))
  - [go4.org/netipx](https://pkg.go.dev/go4.org/netipx) ([BSD-3-Clause](https://github.com/go4org/netipx/blob/fdeea329fbba/LICENSE))
- - [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) ([BSD-3-Clause](https://cs.opensource.google/go/x/crypto/+/v0.52.0:LICENSE))
+ - [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) ([BSD-3-Clause](https://cs.opensource.google/go/x/crypto/+/v0.57.0:LICENSE))
  - [golang.org/x/exp](https://pkg.go.dev/golang.org/x/exp) ([BSD-3-Clause](https://cs.opensource.google/go/x/exp/+/746e56fc:LICENSE))
  - [golang.org/x/mobile](https://pkg.go.dev/golang.org/x/mobile) ([BSD-3-Clause](https://cs.opensource.google/go/x/mobile/+/81131f64:LICENSE))
- - [golang.org/x/mod/semver](https://pkg.go.dev/golang.org/x/mod/semver) ([BSD-3-Clause](https://cs.opensource.google/go/x/mod/+/v0.35.0:LICENSE))
- - [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) ([BSD-3-Clause](https://cs.opensource.google/go/x/net/+/v0.55.0:LICENSE))
- - [golang.org/x/sync](https://pkg.go.dev/golang.org/x/sync) ([BSD-3-Clause](https://cs.opensource.google/go/x/sync/+/v0.20.0:LICENSE))
- - [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) ([BSD-3-Clause](https://cs.opensource.google/go/x/sys/+/v0.45.0:LICENSE))
- - [golang.org/x/term](https://pkg.go.dev/golang.org/x/term) ([BSD-3-Clause](https://cs.opensource.google/go/x/term/+/v0.43.0:LICENSE))
- - [golang.org/x/text](https://pkg.go.dev/golang.org/x/text) ([BSD-3-Clause](https://cs.opensource.google/go/x/text/+/v0.37.0:LICENSE))
+ - [golang.org/x/mod/semver](https://pkg.go.dev/golang.org/x/mod/semver) ([BSD-3-Clause](https://cs.opensource.google/go/x/mod/+/v0.41.0:LICENSE))
+ - [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) ([BSD-3-Clause](https://cs.opensource.google/go/x/net/+/v0.60.0:LICENSE))
+ - [golang.org/x/sync](https://pkg.go.dev/golang.org/x/sync) ([BSD-3-Clause](https://cs.opensource.google/go/x/sync/+/v0.23.0:LICENSE))
+ - [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) ([BSD-3-Clause](https://cs.opensource.google/go/x/sys/+/v0.48.0:LICENSE))
+ - [golang.org/x/term](https://pkg.go.dev/golang.org/x/term) ([BSD-3-Clause](https://cs.opensource.google/go/x/term/+/v0.46.0:LICENSE))
+ - [golang.org/x/text](https://pkg.go.dev/golang.org/x/text) ([BSD-3-Clause](https://cs.opensource.google/go/x/text/+/v0.42.0:LICENSE))
  - [golang.org/x/time/rate](https://pkg.go.dev/golang.org/x/time/rate) ([BSD-3-Clause](https://cs.opensource.google/go/x/time/+/v0.15.0:LICENSE))
- - [golang.org/x/tools](https://pkg.go.dev/golang.org/x/tools) ([BSD-3-Clause](https://cs.opensource.google/go/x/tools/+/v0.44.0:LICENSE))
+ - [golang.org/x/tools](https://pkg.go.dev/golang.org/x/tools) ([BSD-3-Clause](https://cs.opensource.google/go/x/tools/+/v0.49.0:LICENSE))
  - [gvisor.dev/gvisor/pkg](https://pkg.go.dev/gvisor.dev/gvisor/pkg) ([Apache-2.0](https://github.com/google/gvisor/blob/573d5e7127a8/LICENSE))
  - [tailscale.com](https://pkg.go.dev/tailscale.com) ([BSD-3-Clause](https://github.com/tailscale/tailscale/blob/HEAD/LICENSE))
 
@@ -935,7 +935,7 @@ Some packages may only be included on certain architectures or operating systems
  - [github.com/google/btree](https://pkg.go.dev/github.com/google/btree) ([Apache-2.0](https://github.com/google/btree/blob/v1.1.3/LICENSE))
  - [github.com/google/uuid](https://pkg.go.dev/github.com/google/uuid) ([BSD-3-Clause](https://github.com/google/uuid/blob/v1.6.0/LICENSE))
  - [github.com/hdevalence/ed25519consensus](https://pkg.go.dev/github.com/hdevalence/ed25519consensus) ([BSD-3-Clause](https://github.com/hdevalence/ed25519consensus/blob/v0.2.0/LICENSE))
- - [github.com/insomniacslk/dhcp](https://pkg.go.dev/github.com/insomniacslk/dhcp) ([BSD-3-Clause](https://github.com/insomniacslk/dhcp/blob/15c9b8791914/LICENSE))
+ - [github.com/insomniacslk/dhcp](https://pkg.go.dev/github.com/insomniacslk/dhcp) ([BSD-3-Clause](https://github.com/insomniacslk/dhcp/blob/c76316d4aa82/LICENSE))
  - [github.com/jellydator/ttlcache/v3](https://pkg.go.dev/github.com/jellydator/ttlcache/v3) ([MIT](https://github.com/jellydator/ttlcache/blob/v3.1.0/LICENSE))
  - [github.com/jmespath/go-jmespath](https://pkg.go.dev/github.com/jmespath/go-jmespath) ([Apache-2.0](https://github.com/jmespath/go-jmespath/blob/v0.4.0/LICENSE))
  - [github.com/kballard/go-shellquote](https://pkg.go.dev/github.com/kballard/go-shellquote) ([MIT](https://github.com/kballard/go-shellquote/blob/95032a82bc51/LICENSE))
@@ -968,15 +968,15 @@ Some packages may only be included on certain architectures or operating systems
  - [go.yaml.in/yaml/v2](https://pkg.go.dev/go.yaml.in/yaml/v2) ([Apache-2.0](https://github.com/yaml/go-yaml/blob/v2.4.4/LICENSE))
  - [go4.org/mem](https://pkg.go.dev/go4.org/mem) ([Apache-2.0](https://github.com/go4org/mem/blob/ae6ca9944745/LICENSE))
  - [go4.org/netipx](https://pkg.go.dev/go4.org/netipx) ([BSD-3-Clause](https://github.com/go4org/netipx/blob/fdeea329fbba/LICENSE))
- - [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) ([BSD-3-Clause](https://cs.opensource.google/go/x/crypto/+/v0.54.0:LICENSE))
+ - [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) ([BSD-3-Clause](https://cs.opensource.google/go/x/crypto/+/v0.57.0:LICENSE))
  - [golang.org/x/exp](https://pkg.go.dev/golang.org/x/exp) ([BSD-3-Clause](https://cs.opensource.google/go/x/exp/+/746e56fc:LICENSE))
  - [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) ([BSD-3-Clause](https://cs.opensource.google/go/x/image/+/v0.41.0:LICENSE))
- - [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) ([BSD-3-Clause](https://cs.opensource.google/go/x/net/+/v0.56.0:LICENSE))
+ - [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) ([BSD-3-Clause](https://cs.opensource.google/go/x/net/+/v0.60.0:LICENSE))
  - [golang.org/x/oauth2](https://pkg.go.dev/golang.org/x/oauth2) ([BSD-3-Clause](https://cs.opensource.google/go/x/oauth2/+/v0.36.0:LICENSE))
- - [golang.org/x/sync](https://pkg.go.dev/golang.org/x/sync) ([BSD-3-Clause](https://cs.opensource.google/go/x/sync/+/v0.22.0:LICENSE))
- - [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) ([BSD-3-Clause](https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE))
- - [golang.org/x/term](https://pkg.go.dev/golang.org/x/term) ([BSD-3-Clause](https://cs.opensource.google/go/x/term/+/v0.45.0:LICENSE))
- - [golang.org/x/text](https://pkg.go.dev/golang.org/x/text) ([BSD-3-Clause](https://cs.opensource.google/go/x/text/+/v0.40.0:LICENSE))
+ - [golang.org/x/sync](https://pkg.go.dev/golang.org/x/sync) ([BSD-3-Clause](https://cs.opensource.google/go/x/sync/+/v0.23.0:LICENSE))
+ - [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) ([BSD-3-Clause](https://cs.opensource.google/go/x/sys/+/v0.48.0:LICENSE))
+ - [golang.org/x/term](https://pkg.go.dev/golang.org/x/term) ([BSD-3-Clause](https://cs.opensource.google/go/x/term/+/v0.46.0:LICENSE))
+ - [golang.org/x/text](https://pkg.go.dev/golang.org/x/text) ([BSD-3-Clause](https://cs.opensource.google/go/x/text/+/v0.42.0:LICENSE))
  - [golang.org/x/time/rate](https://pkg.go.dev/golang.org/x/time/rate) ([BSD-3-Clause](https://cs.opensource.google/go/x/time/+/v0.15.0:LICENSE))
  - [golang.zx2c4.com/wintun](https://pkg.go.dev/golang.zx2c4.com/wintun) ([MIT](https://git.zx2c4.com/wintun-go/tree/LICENSE?id=0fa3db229ce2))
  - [golang.zx2c4.com/wireguard/windows/tunnel/winipcfg](https://pkg.go.dev/golang.zx2c4.com/wireguard/windows/tunnel/winipcfg) ([MIT](https://git.zx2c4.com/wireguard-windows/tree/COPYING?h=v0.5.3))
@@ -985,3 +985,25 @@ Some packages may only be included on certain architectures or operating systems
  - [sigs.k8s.io/yaml](https://pkg.go.dev/sigs.k8s.io/yaml) ([Apache-2.0](https://github.com/kubernetes-sigs/yaml/blob/v1.6.0/LICENSE))
  - [tailscale.com](https://pkg.go.dev/tailscale.com) ([BSD-3-Clause](https://github.com/tailscale/tailscale/blob/HEAD/LICENSE))
  - [tailscale.com/tempfork/spf13/cobra](https://pkg.go.dev/tailscale.com/tempfork/spf13/cobra) ([Apache-2.0](https://github.com/tailscale/tailscale/blob/HEAD/tempfork/spf13/cobra/LICENSE.txt))
+
+## PinNode Linux server dependency inventory
+
+# PinNode Linux server dependencies
+
+The Linux/amd64 server built with Go 1.27.3 includes the following Go modules.
+The links identify the corresponding upstream license and copyright notices.
+
+| Module | Version | License and notices |
+| --- | --- | --- |
+| github.com/dustin/go-humanize | v1.0.1 | [MIT](https://github.com/dustin/go-humanize/blob/v1.0.1/LICENSE) |
+| github.com/google/uuid | v1.6.0 | [BSD-3-Clause](https://github.com/google/uuid/blob/v1.6.0/LICENSE) |
+| github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | [BSD-3-Clause](https://github.com/remyoudompheng/bigfft/blob/24d4a6f8daec/LICENSE) |
+| golang.org/x/crypto | v0.56.0 | [BSD-3-Clause](https://cs.opensource.google/go/x/crypto/+/v0.56.0:LICENSE) |
+| golang.org/x/sys | v0.47.0 | [BSD-3-Clause](https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE) |
+| modernc.org/libc | v1.74.4 | [BSD-3-Clause](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE), [third-party notices](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE-3RD-PARTY.md) |
+| modernc.org/mathutil | v1.7.1 | [BSD-3-Clause](https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE) |
+| modernc.org/memory | v1.11.0 | [BSD-3-Clause](https://gitlab.com/cznic/memory/-/blob/v1.11.0/LICENSE), [Go](https://gitlab.com/cznic/memory/-/blob/v1.11.0/LICENSE-GO), [mmap-go](https://gitlab.com/cznic/memory/-/blob/v1.11.0/LICENSE-MMAP-GO) |
+| modernc.org/sqlite | v1.57.0 | [BSD-3-Clause](https://gitlab.com/cznic/sqlite/-/blob/v1.57.0/LICENSE), [SQLite public-domain notice](https://gitlab.com/cznic/sqlite/-/blob/v1.57.0/LICENSE-SQLITE), [sqlite-vec MIT notice](https://gitlab.com/cznic/sqlite/-/blob/v1.57.0/LICENSE-SQLITE_VEC) |
+
+Go and the Tailscale Go toolchain are distributed under the
+[Go BSD license](https://go.googlesource.com/go/+/refs/tags/go1.27.3/LICENSE).

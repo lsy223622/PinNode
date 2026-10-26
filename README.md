@@ -125,7 +125,7 @@ Current build settings are:
 | --- | --- |
 | Minimum Android API | 33 (Android 13) |
 | Compile/target API | 36 |
-| NDK | `23.1.7779620` |
+| NDK | `30.0.16248370` |
 | Java/Kotlin target | 17 |
 | Android Gradle Plugin | `8.13.0` |
 | Kotlin | `1.9.22` |
@@ -134,7 +134,7 @@ The more specialized dual-network behavior depends on Android network-binding AP
 
 ### Server
 
-The repository currently declares Go `1.26.6`.
+The repository currently declares Go `1.27.3`.
 
 A running server also needs:
 
@@ -536,7 +536,8 @@ Useful source documents:
 - [`docs/api.md`](docs/api.md) — human-readable API behavior;
 - [`docs/openapi.yaml`](docs/openapi.yaml) — OpenAPI 3.1 contract;
 - [`docs/architecture.md`](docs/architecture.md) — component and lifecycle model;
-- [`docs/threat-model.md`](docs/threat-model.md) — security reasoning and current validation boundaries.
+- [`docs/threat-model.md`](docs/threat-model.md) — security reasoning and current validation boundaries;
+- [`docs/release-readiness.md`](docs/release-readiness.md) — 1.0 scope audit, scenario coverage, and remaining acceptance evidence (Chinese).
 
 The server applies bounded JSON parsing, rejects malformed/trailing input, returns structured errors, and emits `X-Request-ID` for requests. Integration code should use the OpenAPI contract for request/response schema rather than copying structures from README examples.
 
@@ -564,7 +565,7 @@ The Makefile can install the repository's Android SDK package set:
 make androidsdk
 ```
 
-It uses API level `36`, Android Build Tools `36.0.0`, and NDK `23.1.7779620` from the repository build configuration.
+It uses API level `36`, Android Build Tools `36.0.0`, and NDK `30.0.16248370` from the repository build configuration.
 
 ### Fixed-server build
 

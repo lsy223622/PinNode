@@ -8,7 +8,7 @@ on:
       release_tag:
         description: Version tag to validate against version.properties
         required: true
-        default: v0.3.0
+        default: v0.3.1
         type: string
 
 permissions:
@@ -127,11 +127,21 @@ jobs:
       - name: Run Go tests
         run: make go-test
 
+      - name: Test forwarding network binding
+        run: ./tool/go test -race tailscale.com/wgengine/netstack
+
+      - name: Check Go core vulnerabilities
+        run: |
+          GOBIN="$RUNNER_TEMP/pinnode-tools" ./tool/go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          PATH="$(./tool/go env GOROOT)/bin:$PATH" GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+            "$RUNNER_TEMP/pinnode-tools/govulncheck" -tags=tailscale_go,ts_omit_cachenetmap ./libtailscale tailscale.com/wgengine/netstack
+
       - name: Run server tests
         working-directory: server
         run: |
-          go test ./...
+          go test -race ./...
           go vet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
       - name: Build Linux server release
         working-directory: server

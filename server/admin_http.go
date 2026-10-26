@@ -233,8 +233,16 @@ func (s *Service) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Request) {
+	s.handleTailscaleCredential(w, r, "")
+}
+
+func (s *Service) handleTailscaleCredential(w http.ResponseWriter, r *http.Request, credentialID string) {
 	writeRequired := r.Method != http.MethodGet
 	if !s.requireAdminAPI(w, r, writeRequired) {
+		return
+	}
+	if (credentialID != "" && r.Method != http.MethodPut) || (credentialID == "" && r.Method == http.MethodPut) {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 		return
 	}
 	switch r.Method {
@@ -250,10 +258,24 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 			items = append(items, publicTailscaleCredential(credential))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"credentials": items})
-	case http.MethodPost:
+	case http.MethodPost, http.MethodPut:
 		if !secureAuthTransport(r, s.config.TrustedProxyCIDRs) {
 			writeError(w, http.StatusUpgradeRequired, "secure_transport_required", "保存 Tailscale 凭据需要 HTTPS；仅服务端本机可使用 HTTP")
 			return
+		}
+		var existing TailscaleCredential
+		if credentialID != "" {
+			var ok bool
+			var err error
+			existing, ok, err = s.store.GetTailscaleCredential(credentialID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "credential_read_failed", "读取凭据失败")
+				return
+			}
+			if !ok {
+				writeError(w, http.StatusNotFound, "credential_not_found", "凭据不存在")
+				return
+			}
 		}
 		var request struct {
 			Name         string `json:"name"`
@@ -326,10 +348,14 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "credential_type_unsupported", "不支持的 Tailscale 凭据类型")
 			return
 		}
-		id, err := newURLToken(16)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
-			return
+		id := credentialID
+		if id == "" {
+			var err error
+			id, err = newURLToken(16)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
+				return
+			}
 		}
 		ciphertext, err := s.cipher.Seal(id, plaintext)
 		if err != nil {
@@ -341,19 +367,39 @@ func (s *Service) handleTailscaleCredentials(w http.ResponseWriter, r *http.Requ
 		credential := TailscaleCredential{
 			ID: id, Name: name, Kind: kind, Ciphertext: ciphertext, CreatedAt: now, UpdatedAt: now,
 		}
-		if err := s.store.PutTailscaleCredential(credential); err != nil {
-			if isUniqueConstraintError(err) {
+		status := http.StatusCreated
+		var saveErr error
+		if credentialID == "" {
+			saveErr = s.store.PutTailscaleCredential(credential)
+		} else {
+			credential.CreatedAt = existing.CreatedAt
+			credential.LastUsedAt = existing.LastUsedAt
+			// Token readers and rotation share this lock so an exchange using the
+			// previous secret cannot repopulate the cache after rotation commits.
+			s.oauthMu.Lock()
+			saveErr = s.store.UpdateTailscaleCredential(credential)
+			if saveErr == nil {
+				delete(s.oauth, id)
+				if kind == TailscaleCredentialOAuthClient {
+					s.oauth[id] = cachedOAuthToken{token: oauthToken.Token, expiresAt: oauthToken.ExpiresAt}
+				}
+			}
+			s.oauthMu.Unlock()
+			status = http.StatusOK
+		}
+		if saveErr != nil {
+			if isUniqueConstraintError(saveErr) {
 				writeError(w, http.StatusConflict, "credential_name_conflict", "令牌名称已经存在")
 				return
 			}
-			s.logger.Errorf("tailscale", "保存 Tailscale 凭据失败: %v", err)
+			s.logger.Errorf("tailscale", "保存 Tailscale 凭据失败: %v", saveErr)
 			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
 		}
-		if kind == TailscaleCredentialOAuthClient {
+		if credentialID == "" && kind == TailscaleCredentialOAuthClient {
 			s.cacheOAuthToken(id, oauthToken)
 		}
-		writeJSON(w, http.StatusCreated, publicTailscaleCredential(credential))
+		writeJSON(w, status, publicTailscaleCredential(credential))
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "方法不支持")
 	}
@@ -495,6 +541,8 @@ func (s *Service) credentialToken(ctx context.Context, id string) (string, error
 	if id == "" {
 		return "", fmt.Errorf("凭据 ID 为空")
 	}
+	s.oauthMu.Lock()
+	defer s.oauthMu.Unlock()
 	credential, ok, err := s.store.GetTailscaleCredential(id)
 	if err != nil {
 		return "", err
@@ -518,8 +566,6 @@ func (s *Service) credentialToken(ctx context.Context, id string) (string, error
 		return "", fmt.Errorf("OAuth client 凭据无效")
 	}
 
-	s.oauthMu.Lock()
-	defer s.oauthMu.Unlock()
 	if cached, ok := s.oauth[id]; ok && time.Now().Add(time.Minute).Before(cached.expiresAt) {
 		return cached.token, nil
 	}

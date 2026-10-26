@@ -23,6 +23,7 @@ SECTIONS = (
         "Tailscale core dependency inventory",
         ROOT / "third_party" / "tailscale" / "licenses" / "tailscale.md",
     ),
+    ("PinNode Linux server dependency inventory", ROOT / "server" / "licenses.md"),
 )
 
 

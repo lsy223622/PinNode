@@ -31,8 +31,12 @@ jobs:
 
       - name: Run server tests
         working-directory: server
-        run: go test ./...
+        run: go test -race ./...
 
       - name: Run server vet
         working-directory: server
         run: go vet ./...
+
+      - name: Check server vulnerabilities
+        working-directory: server
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

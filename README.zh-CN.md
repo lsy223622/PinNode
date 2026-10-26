@@ -125,7 +125,7 @@ App 会应用服务器下发的 Tailscale prefs，运行 Android `VpnService`，
 | --- | --- |
 | 最低 Android API | 33（Android 13） |
 | Compile / target API | 36 |
-| NDK | `23.1.7779620` |
+| NDK | `30.0.16248370` |
 | Java/Kotlin target | 17 |
 | Android Gradle Plugin | `8.13.0` |
 | Kotlin | `1.9.22` |
@@ -134,7 +134,7 @@ App 会应用服务器下发的 Tailscale prefs，运行 Android `VpnService`，
 
 ### Server
 
-仓库当前声明 Go `1.26.6`。
+仓库当前声明 Go `1.27.3`。
 
 服务端运行时还需要：
 
@@ -536,7 +536,8 @@ PinNode 的公共协议位于 `/v1`。
 - [`docs/api.md`](docs/api.md)：接口行为说明；
 - [`docs/openapi.yaml`](docs/openapi.yaml)：OpenAPI 3.1 contract；
 - [`docs/architecture.md`](docs/architecture.md)：组件与生命周期；
-- [`docs/threat-model.md`](docs/threat-model.md)：安全模型和当前验证边界。
+- [`docs/threat-model.md`](docs/threat-model.md)：安全模型和当前验证边界；
+- [`docs/release-readiness.md`](docs/release-readiness.md)：1.0 规划核对、场景覆盖和剩余验收证据。
 
 Server 对 JSON body 做大小限制，拒绝格式错误和 trailing input，返回结构化错误，并为请求生成 `X-Request-ID`。写集成时以 OpenAPI schema 作为 request/response contract。
 
@@ -564,7 +565,7 @@ Makefile 可以安装仓库要求的 Android SDK package：
 make androidsdk
 ```
 
-当前构建使用 API 36、Android Build Tools `36.0.0` 和 NDK `23.1.7779620`。
+当前构建使用 API 36、Android Build Tools `36.0.0` 和 NDK `30.0.16248370`。
 
 ### 固定 Server 的 APK
 

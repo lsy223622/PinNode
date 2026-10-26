@@ -125,6 +125,14 @@ tag 限制的 OAuth client。数据库备份和 `pinnode.secret`/`PINNODE_INSTAN
 
 ## 生产部署（systemd + HTTPS 反向代理）
 
+可直接调整的示例见 [`deploy/pinnode.service`](../deploy/pinnode.service) 和
+[`deploy/nginx.conf`](../deploy/nginx.conf)。systemd 示例使用 `/usr/local/lib/pinnode/pinnode-server`、
+`/var/lib/pinnode` 和 `/etc/pinnode/pinnode.env`；先创建 `pinnode` 系统账号和相应目录，
+环境文件只让 root 和服务账号读取。环境中设置 `PINNODE_LISTEN_ADDR=127.0.0.1:6633`、
+`PINNODE_DATABASE_PATH=/var/lib/pinnode/pinnode.db`、
+`PINNODE_SECRET_PATH=/var/lib/pinnode/pinnode.secret`，可信代理仅包含实际反代的地址。
+Nginx 示例需替换域名和证书路径，放入 `http` 上下文；SSE 已关闭代理缓冲。
+
 正式服务可以运行在自己的 Linux 服务器上。推荐使用独立服务账号和 systemd：
 
 1. 在 `server` 目录执行 `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o pinnode-server .`，把生成的二进制部署到服务账号可读的目录。
@@ -139,3 +147,46 @@ tag 限制的 OAuth client。数据库备份和 `pinnode.secret`/`PINNODE_INSTAN
 
 接口契约见 `../docs/api.md` 与 `../docs/openapi.yaml`，安全边界见
 `../docs/architecture.md` 与 `../docs/threat-model.md`。
+
+## 凭据轮换
+
+在管理页选择已有凭据，点击“轮换所选凭据”，输入属于同一 Tailnet、拥有相应设备 tag
+权限的新凭据，再点击“验证并轮换”。验证失败保留旧凭据；成功后保留原 credential ID，
+已有 PIN、会话和清理任务会继续引用它，OAuth access token 缓存同步替换。确认既有节点的
+状态查询、路由管理和清理可用后，再在 Tailscale 撤销旧凭据。列出 auth keys 的验证只能证明
+当前凭据的基础访问能力，不能代替对每台既有设备权限的核对。
+
+## 备份、恢复与密码恢复
+
+Server 使用 WAL。在线备份使用 SQLite 一致性快照，不要只复制运行中的 `.db` 文件：
+
+```bash
+sudo -u pinnode env PINNODE_DATABASE_PATH=/var/lib/pinnode/pinnode.db \
+  /usr/local/lib/pinnode/pinnode-server backup --output /var/lib/pinnode/backup-20261018.db
+```
+
+输出路径必须不存在，父目录应只允许服务账号访问。快照包含已提交的 WAL 数据；命令不复制
+实例根密钥。将快照转入受限备份存储，并单独备份对应的 `pinnode.secret`；使用环境注入密钥
+的部署则备份其密钥管理系统中的同一值。运行时会话令牌摘要、幂等重放材料和凭据密文均属于
+敏感数据，数据库快照也应受保护。
+
+恢复时先停止服务，把快照和配套实例根密钥放入一个新的、空的数据目录，设置服务账号权限，
+然后用备份对应版本的二进制启动。不要把快照覆盖到仍带有旧 `-wal` / `-shm` 文件的数据目录。
+检查 `/healthz`、管理员登录、既有会话与清理待办；恢复后再确认 Tailscale 控制面状态。
+升级前保留旧二进制和升级前快照；迁移后的数据库不保证可以直接交给旧二进制，回滚应恢复整组
+对应版本的数据和密钥。备份时点后的控制面变化不在快照中，需要核对受管 tag 下的设备。
+
+忘记管理员密码时，先停止服务，避免并发登录，然后通过服务器本机重置已有账号。
+下面通过 `systemd-ask-password` 隐藏输入，密码只经标准输入传入，不放入参数或 shell 历史：
+
+```bash
+sudo systemctl stop pinnode
+systemd-ask-password 'PinNode new administrator password:' | \
+  sudo -u pinnode env PINNODE_DATABASE_PATH=/var/lib/pinnode/pinnode.db \
+  /usr/local/lib/pinnode/pinnode-server admin-reset-password --username owner --password-stdin
+sudo systemctl start pinnode
+```
+
+新密码仍需满足 15–128 个字符。命令只更新指定管理员密码、重置登录退避并撤销所有已有
+管理员登录会话，不修改节点会话、Tailscale 凭据或实例根密钥。账号不存在、密码无效或数据库
+不存在时会失败；不会新建管理员或数据库。

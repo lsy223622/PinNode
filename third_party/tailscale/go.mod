@@ -1,6 +1,6 @@
 module tailscale.com
 
-go 1.26.6
+go 1.27.3
 
 require (
 	filippo.io/mkcert v1.4.4
@@ -74,7 +74,7 @@ require (
 	github.com/huin/goupnp v1.3.0
 	github.com/illarion/gonotify/v3 v3.0.2
 	github.com/inetaf/tcpproxy v0.0.0-20250203165043-ded522cbd03f
-	github.com/insomniacslk/dhcp v0.0.0-20240129002554-15c9b8791914
+	github.com/insomniacslk/dhcp v0.0.0-20260719225207-c76316d4aa82
 	github.com/jellydator/ttlcache/v3 v3.1.0
 	github.com/jsimonetti/rtnetlink v1.4.1
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
@@ -123,16 +123,16 @@ require (
 	go.uber.org/zap v1.27.0
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.57.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
-	golang.org/x/mod v0.37.0
-	golang.org/x/net v0.56.0
+	golang.org/x/mod v0.41.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0
 	golang.org/x/time v0.15.0
-	golang.org/x/tools v0.47.0
+	golang.org/x/tools v0.49.0
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 	golang.zx2c4.com/wireguard/windows v0.5.3
@@ -283,7 +283,7 @@ require (
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260113154411-7d0074ccc6f1 // indirect
-	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect
+	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251213004720-97cd9d5aeac2 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
@@ -511,7 +511,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/image v0.41.0
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.42.0
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

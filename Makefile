@@ -16,14 +16,14 @@ export JKS_PASSWORD JKS_KEY_PASSWORD
 # with this name, it will be used.
 #
 # The convention here is pinnode-android-build-amd64-<date>
-DOCKER_IMAGE := pinnode-android-build-amd64-20260827-1
+DOCKER_IMAGE := pinnode-android-build-amd64-20261026-1
 
 # The integration test image contains the Android emulator, system image, SDK,
 # build-tools, NDK, adb, and helper tools needed to run the emulator-backed Go
 # integration tests. Bump this tag when docker/Dockerfile.android-integration
 # or the required tool versions change, using:
 # pinnode-android-integration-amd64-YYYYMMDD-N
-ANDROID_INTEGRATION_DOCKER_IMAGE := pinnode-android-integration-amd64-20260827-2
+ANDROID_INTEGRATION_DOCKER_IMAGE := pinnode-android-integration-amd64-20261026-1
 export TS_USE_TOOLCHAIN=1
 
 # If set, additional comma-separated build tags passed to the libtailscale Go
